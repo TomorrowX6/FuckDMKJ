@@ -1,0 +1,129 @@
+[
+  {
+    "kind": "protocol",
+    "params": {
+      "version": "5.0.0",
+      "timestamp": "1700000000123",
+      "uid": "42",
+      "token": "example-token"
+    },
+    "serialized": "{\"timestamp\":\"1700000000123\",\"token\":\"example-token\",\"uid\":\"42\",\"version\":\"5.0.0\"}",
+    "signToken": "100EA7E3C39B36C3CCA73927332123AF",
+    "requestPlaintext": "{\"signToken\":\"100EA7E3C39B36C3CCA73927332123AF\",\"timestamp\":\"1700000000123\",\"token\":\"example-token\",\"uid\":\"42\",\"version\":\"5.0.0\"}",
+    "key": "abcdefghijklmnop",
+    "requestIv": "1628092121312213",
+    "aesCiphertext": "2mxWhmialpEEvwUNf8GhX3puLGyTmpCIVRZo/RFjRO99T8ufW6ciYqvVcLYO j7NFAXdcHE1L+/quRH79kO/F4LQ7A/RUmHqpfIKWyIVHZVmhnMPrnB8lWt2a ap4Z4oNHZfP9y1NzWgM3gaPd7Gzok3Dfn8/E6ZK3lWOGKp6oQz1l0LVmWvw7 Npn5soSX+GK1",
+    "rsaCiphertext": "mCaoytQbYlps2l8ykZwog8ELKz/jQzcluf0edvAYKzote7kTluUKC7nRuS0sXG7UYi/yvR1jqBjwArEpPkmTj2d8AfEj1O5lJdi5JkRANRVt/P3XakbYYIyRp6OnzS4DMKkwN5K37MCLU+TV0jJut0C5RfwYZ0xy1ZPEZ1LStVQ=",
+    "wireValue": "Mm14V2htaWFscEVFdndVTmY4R2hYM3B1TEd5VG1wQ0lWUlpvL1JGalJPOTlU OHVmVzZjaVlxdlZjTFlPIGo3TkZBWGRjSEUxTCsvcXVSSDc5a08vRjRMUTdB L1JVbUhxcGZJS1d5SVZIWlZtaG5NUHJuQjhsV3QyYSBhcDRaNG9OSFpmUDl5 MU56V2dNM2dhUGQ3R3pvazNEZm44L0U2WkszbFdPR0twNm9RejFsMExWbVd2 dzcgTnBuNXNvU1grR0sxbUNhb3l0UWJZbHBzMmw4eWtad29nOEVMS3ovalF6 Y2x1ZjBlZHZBWUt6b3RlN2tUbHVVS0M3blJ1UzBzWEc3VVlpL3l2UjFqcUJq d0FyRXBQa21UajJkOEFmRWoxTzVsSmRpNUprUkFOUlZ0L1AzWGFrYllZSXlS cDZPbnpTNERNS2t3TjVLMzdNQ0xVK1RWMGpKdXQwQzVSZndZWjB4eTFaUEVa MUxTdFZRPQ==",
+    "responseIv": "9618953120112110",
+    "responsePlaintext": "{\"code\":100,\"data\":{\"probe\":true}}",
+    "responseCiphertext": "F4NeqDwAWfYJL3P8QGfF8W7hQpJbwHpaVqzC4uxwaYOUXtySkdy5sjgnDShT 3F+n"
+  },
+  {
+    "kind": "protocol",
+    "params": {
+      "z": "汉字<>&='\"/  ",
+      "a": null,
+      "timestamp": "1700000000124",
+      "empty": ""
+    },
+    "serialized": "{\"a\":\"\",\"empty\":\"\",\"timestamp\":\"1700000000124\",\"z\":\"汉字<>&='\\\"/\\u2028\\u2029\"}",
+    "signToken": "440FF2C4578C4A0EBBAAD8C0A8DC7BC1",
+    "requestPlaintext": "{\"a\":\"\",\"empty\":\"\",\"signToken\":\"440FF2C4578C4A0EBBAAD8C0A8DC7BC1\",\"timestamp\":\"1700000000124\",\"z\":\"汉字<>&='\\\"/\\u2028\\u2029\"}",
+    "key": "abcdefghijklmnop",
+    "requestIv": "1628092121312213",
+    "aesCiphertext": "O3Q1RcgG1kLMyfGNPD9xrAAusTS8+XRN2OfHf5e8wYKSvIISAHYU5G5YTNyl 8ddVX0uYS/FQPHW/43zcjBLWCyx8Paj16L6w8IW/HpvMLCjg1ylXEjVQEaRw CIeE4TahJFE//eo544moraUvfornLY2Z8qgprR3Xl0UmlWpr1oI=",
+    "rsaCiphertext": "k7J+UPIYmi1aEc593pjGoSJwXR+BG/vI7iNsNVaUy3pgTWbvkP9jSd0Gps7lq/dneMLcxoPeyKmcx/wGwM0NubyeWypeKRuMNRWYC0VzYKm9+PuHKI0NR5x1l/miukSQJHWsQ7HSi0cSNhUsDZZZsDrlv2MyxqTLSujYDbXesqM=",
+    "wireValue": "TzNRMVJjZ0cxa0xNeWZHTlBEOXhyQUF1c1RTOCtYUk4yT2ZIZjVlOHdZS1N2 SUlTQUhZVTVHNVlUTnlsIDhkZFZYMHVZUy9GUVBIVy80M3pjakJMV0N5eDhQ YWoxNkw2dzhJVy9IcHZNTENqZzF5bFhFalZRRWFSdyBDSWVFNFRhaEpGRS8v ZW81NDRtb3JhVXZmb3JuTFkyWjhxZ3ByUjNYbDBVbWxXcHIxb0k9azdKK1VQ SVltaTFhRWM1OTNwakdvU0p3WFIrQkcvdkk3aU5zTlZhVXkzcGdUV2J2a1A5 alNkMEdwczdscS9kbmVNTGN4b1BleUttY3gvd0d3TTBOdWJ5ZVd5cGVLUnVN TlJXWUMwVnpZS205K1B1SEtJME5SNXgxbC9taXVrU1FKSFdzUTdIU2kwY1NO aFVzRFpaWnNEcmx2Mk15eHFUTFN1allEYlhlc3FNPQ==",
+    "responseIv": "9618953120112110",
+    "responsePlaintext": "{\"code\":100,\"data\":{\"probe\":true}}",
+    "responseCiphertext": "F4NeqDwAWfYJL3P8QGfF8W7hQpJbwHpaVqzC4uxwaYOUXtySkdy5sjgnDShT 3F+n"
+  },
+  {
+    "kind": "protocol",
+    "params": {
+      "": "private-use",
+      "😀": "astral",
+      "a": "x",
+      "timestamp": "1700000000125"
+    },
+    "serialized": "{\"a\":\"x\",\"timestamp\":\"1700000000125\",\"😀\":\"astral\",\"\":\"private-use\"}",
+    "signToken": "B8334AF9EA2434B226E7B2304DF33348",
+    "requestPlaintext": "{\"a\":\"x\",\"signToken\":\"B8334AF9EA2434B226E7B2304DF33348\",\"timestamp\":\"1700000000125\",\"😀\":\"astral\",\"\":\"private-use\"}",
+    "key": "abcdefghijklmnop",
+    "requestIv": "1628092121312213",
+    "aesCiphertext": "s3mT2xfJHZ5qaaIBqsAhogCCYwn0G/tCBmykeQiWA6sSZVzlCnGOQGk2yS0o lPmxaM6ggqX32bM4RLTxKYnbQCeeImuGhTm8Q264MY3aoslW313MlYFCIXVC 8OGV9xXQ+/VIT320FeNBdlt/Gqk58jNdIzMXzt3gfyi4tDZvM9s=",
+    "rsaCiphertext": "WwDSRTm+NYkDeb0pEs2xRj9Zym6ZuFnRgrIYkLP9zYHzDubl7uOnxlgsMMI/kJ/46W7kzVACgVXOWsYTO+yOL4Qe3Cctg/eJDLHpkQXxVJHcmrb5tdsubikwiz+q4mlR+5abzJbn/jal8UClZ+Uvp34tSCXittcO0jt+mdLWDu4=",
+    "wireValue": "czNtVDJ4ZkpIWjVxYWFJQnFzQWhvZ0NDWXduMEcvdENCbXlrZVFpV0E2c1Na VnpsQ25HT1FHazJ5UzBvIGxQbXhhTTZnZ3FYMzJiTTRSTFR4S1luYlFDZWVJ bXVHaFRtOFEyNjRNWTNhb3NsVzMxM01sWUZDSVhWQyA4T0dWOXhYUSsvVklU MzIwRmVOQmRsdC9HcWs1OGpOZEl6TVh6dDNnZnlpNHREWnZNOXM9V3dEU1JU bStOWWtEZWIwcEVzMnhSajlaeW02WnVGblJncklZa0xQOXpZSHpEdWJsN3VP bnhsZ3NNTUkva0ovNDZXN2t6VkFDZ1ZYT1dzWVRPK3lPTDRRZTNDY3RnL2VK RExIcGtRWHhWSkhjbXJiNXRkc3ViaWt3aXorcTRtbFIrNWFiekpibi9qYWw4 VUNsWitVdnAzNHRTQ1hpdHRjTzBqdCttZExXRHU0PQ==",
+    "responseIv": "9618953120112110",
+    "responsePlaintext": "{\"code\":100,\"data\":{\"probe\":true}}",
+    "responseCiphertext": "F4NeqDwAWfYJL3P8QGfF8W7hQpJbwHpaVqzC4uxwaYOUXtySkdy5sjgnDShT 3F+n"
+  },
+  {
+    "kind": "protocol",
+    "params": {
+      "page": "2",
+      "newline": "a\n\tb\b",
+      "timestamp": "1700000000126"
+    },
+    "serialized": "{\"newline\":\"a\\n\\tb\\b\",\"page\":\"2\",\"timestamp\":\"1700000000126\"}",
+    "signToken": "5EE760B395AF955685361DFF09B956C1",
+    "requestPlaintext": "{\"newline\":\"a\\n\\tb\\b\",\"page\":\"2\",\"signToken\":\"5EE760B395AF955685361DFF09B956C1\",\"timestamp\":\"1700000000126\"}",
+    "key": "abcdefghijklmnop",
+    "requestIv": "1628092121312213",
+    "aesCiphertext": "pIegyu8fNV2iYniB/s2XdgvWmOeCCRdbiTf6CA8L6QUl29ehMFtHwD87/9V9 VuXCRuApWtmBWJ459poX1uwe1eAosOJun0fF9706rHKEZNS7rEs5lh3zLRdC VHXCL+070woNcyP/0xolFLaX3mDFSw==",
+    "rsaCiphertext": "nAVsEpbSu8Ag0TblrerAy2zNfqLi5xj6PlgtZAmcmd5xJJAUtt9FftqR6u4gtVJWswNS3cvyFY3OMbNOqrnI/5+b1OJGMaflTu6RWxxh9KCLbhqBcZqIvug/LamHnYLNDExdaa0IuUuP+6VwRFoMxdgUES4T/685PSap/PMEsJA=",
+    "wireValue": "cEllZ3l1OGZOVjJpWW5pQi9zMlhkZ3ZXbU9lQ0NSZGJpVGY2Q0E4TDZRVWwy OWVoTUZ0SHdEODcvOVY5IFZ1WENSdUFwV3RtQldKNDU5cG9YMXV3ZTFlQW9z T0p1bjBmRjk3MDZySEtFWk5TN3JFczVsaDN6TFJkQyBWSFhDTCswNzB3b05j eVAvMHhvbEZMYVgzbURGU3c9PW5BVnNFcGJTdThBZzBUYmxyZXJBeTJ6TmZx TGk1eGo2UGxndFpBbWNtZDV4SkpBVXR0OUZmdHFSNnU0Z3RWSldzd05TM2N2 eUZZM09NYk5PcXJuSS81K2IxT0pHTWFmbFR1NlJXeHhoOUtDTGJocUJjWnFJ dnVnL0xhbUhuWUxOREV4ZGFhMEl1VXVQKzZWd1JGb014ZGdVRVM0VC82ODVQ U2FwL1BNRXNKQT0=",
+    "responseIv": "9618953120112110",
+    "responsePlaintext": "{\"code\":100,\"data\":{\"probe\":true}}",
+    "responseCiphertext": "F4NeqDwAWfYJL3P8QGfF8W7hQpJbwHpaVqzC4uxwaYOUXtySkdy5sjgnDShT 3F+n"
+  },
+  {
+    "kind": "base64",
+    "size": 0,
+    "inputByte": 65,
+    "encoded": ""
+  },
+  {
+    "kind": "base64",
+    "size": 1,
+    "inputByte": 65,
+    "encoded": "QQ=="
+  },
+  {
+    "kind": "base64",
+    "size": 2,
+    "inputByte": 65,
+    "encoded": "QUE="
+  },
+  {
+    "kind": "base64",
+    "size": 3,
+    "inputByte": 65,
+    "encoded": "QUFB"
+  },
+  {
+    "kind": "base64",
+    "size": 44,
+    "inputByte": 65,
+    "encoded": "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE="
+  },
+  {
+    "kind": "base64",
+    "size": 45,
+    "inputByte": 65,
+    "encoded": "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB "
+  },
+  {
+    "kind": "base64",
+    "size": 46,
+    "inputByte": 65,
+    "encoded": "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB QQ=="
+  },
+  {
+    "kind": "base64",
+    "size": 90,
+    "inputByte": 65,
+    "encoded": "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB "
+  }
+]

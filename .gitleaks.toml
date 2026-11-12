@@ -1,0 +1,20 @@
+title = "Project secrets scan with exact synthetic-vector exceptions"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Two signToken outputs for synthetic protocol fixture inputs"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^tests/fixtures/dm-protocol-(sdk|oracles)\.json$''']
+regexTarget = "secret"
+regexes = ['''^(440FF2C4578C4A0EBBAAD8C0A8DC7BC1|5EE760B395AF955685361DFF09B956C1)$''']
+
+[[allowlists]]
+description = "JCE test ciphertext of the literal synthetic password password123"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^tests/test_dm_login\.py$''']
+regexTarget = "secret"
+regexes = ['''^8995DEF5C18EBD65FD1417716C994074$''']

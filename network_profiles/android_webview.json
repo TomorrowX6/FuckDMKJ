@@ -1,0 +1,62 @@
+{
+  "name": "android16-webview153-example",
+  "source": "docs/browser-profile.md",
+  "userAgent": "Mozilla/5.0 (Linux; Android 16; PHK110 Build/BP2A.250605.015; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/153.0.8010.36 Mobile Safari/537.36",
+  "platform": "Linux aarch64",
+  "locale": "zh-CN",
+  "languages": [
+    "zh-CN",
+    "en-US"
+  ],
+  "timezoneId": "Asia/Shanghai",
+  "viewport": {
+    "width": 355,
+    "height": 753
+  },
+  "screen": {
+    "width": 355,
+    "height": 793
+  },
+  "deviceScaleFactor": 3.5,
+  "maxTouchPoints": 5,
+  "hardwareConcurrency": 8,
+  "userAgentMetadata": {
+    "brands": [
+      {
+        "brand": "Android WebView",
+        "version": "153"
+      },
+      {
+        "brand": "Not_A Brand",
+        "version": "8"
+      },
+      {
+        "brand": "Chromium",
+        "version": "153"
+      }
+    ],
+    "fullVersionList": [
+      {
+        "brand": "Android WebView",
+        "version": "153.0.8010.36"
+      },
+      {
+        "brand": "Not_A Brand",
+        "version": "8.0.0.0"
+      },
+      {
+        "brand": "Chromium",
+        "version": "153.0.8010.36"
+      }
+    ],
+    "platform": "Android",
+    "platformVersion": "16.0.0",
+    "architecture": "",
+    "bitness": "",
+    "model": "PHK110",
+    "mobile": true,
+    "wow64": false,
+    "fullVersion": "153.0.8010.36"
+  },
+  "measurementScope": "Generic Android WebView example profile; no unique device identifiers or session values."
+}

@@ -1,0 +1,16 @@
+{
+  "channelName": "dmkj_Android",
+  "countryCode": "CN",
+  "createTime": 1700000000000,
+  "device": "Android Phone",
+  "hardware": "qcom",
+  "jPushId": "YOUR_JPUSH_ID",
+  "modifyTime": 1700001000000,
+  "operator": "%E4%B8%AD%E5%9B%BD%E7%A7%BB%E5%8A%A8",
+  "screenResolution": "1080-2400",
+  "startTime": 1700001000000,
+  "sysVersion": "Android 36 16",
+  "system": "android",
+  "uuid": "YOUR_DEVICE_UUID",
+  "version": "5.0.0"
+}

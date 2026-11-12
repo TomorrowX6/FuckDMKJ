@@ -1,0 +1,77 @@
+[
+  {
+    "kind": "ORACLE",
+    "at": "2026-11-11T14:18:53.685Z",
+    "pid": 6732,
+    "tid": 6822,
+    "requestId": null,
+    "url": null,
+    "params": {
+      "version": "5.0.0",
+      "timestamp": "1700000000123",
+      "uid": "42",
+      "token": "example-token"
+    },
+    "serialized": "{\"timestamp\":\"1700000000123\",\"token\":\"example-token\",\"uid\":\"42\",\"version\":\"5.0.0\"}",
+    "signToken": "100EA7E3C39B36C3CCA73927332123AF",
+    "aesKey": "abcdefghijklmnop",
+    "requestIv": "1628092121312213",
+    "aesCiphertext": "SkOhPj6qs0eay++iC2kqL61hBrz+pS2UuKbrrHqc5efIuJPY97ArecVJ3wf6 /hph0n+RL0QuBHObv8DwTXRHUYx50lQV2Q0yOB5L5SdnyfcJLhfGQigUGd9G w2U+s0VE"
+  },
+  {
+    "kind": "ORACLE",
+    "at": "2026-11-11T14:18:53.722Z",
+    "pid": 6732,
+    "tid": 6822,
+    "requestId": null,
+    "url": null,
+    "params": {
+      "z": "汉字<>&='\"/  ",
+      "a": null,
+      "timestamp": "1700000000124",
+      "empty": ""
+    },
+    "serialized": "{\"a\":\"\",\"empty\":\"\",\"timestamp\":\"1700000000124\",\"z\":\"汉字<>&='\\\"/\\u2028\\u2029\"}",
+    "signToken": "440FF2C4578C4A0EBBAAD8C0A8DC7BC1",
+    "aesKey": "abcdefghijklmnop",
+    "requestIv": "1628092121312213",
+    "aesCiphertext": "O3Q1RcgG1kLMyfGNPD9xrN7FA+7zWit1G5i85/bQgOnxepFsvnt0HOIFHbzC IYDu1epPJOUDtF+YW9uHbRnHEZm5EOTNNfbjAGXKaSWOJ9cgzEAvS+EIA43J iaZI6j6L"
+  },
+  {
+    "kind": "ORACLE",
+    "at": "2026-11-11T14:18:53.766Z",
+    "pid": 6732,
+    "tid": 6822,
+    "requestId": null,
+    "url": null,
+    "params": {
+      "": "private-use",
+      "😀": "astral",
+      "a": "x",
+      "timestamp": "1700000000125"
+    },
+    "serialized": "{\"a\":\"x\",\"timestamp\":\"1700000000125\",\"😀\":\"astral\",\"\":\"private-use\"}",
+    "signToken": "B8334AF9EA2434B226E7B2304DF33348",
+    "aesKey": "abcdefghijklmnop",
+    "requestIv": "1628092121312213",
+    "aesCiphertext": "yGQEhkZQ8NKTDZTZ8ySmGRlSHjVblfcXKc/YZaWefahSW2FOS7mIznUduvfR y7Lp+ufqZmN+xRuVFi65pmTyLb3wSiJXrRdyowHyx7Vxlbw="
+  },
+  {
+    "kind": "ORACLE",
+    "at": "2026-11-11T14:18:53.798Z",
+    "pid": 6732,
+    "tid": 6822,
+    "requestId": null,
+    "url": null,
+    "params": {
+      "page": "2",
+      "newline": "a\n\tb\b",
+      "timestamp": "1700000000126"
+    },
+    "serialized": "{\"newline\":\"a\\n\\tb\\b\",\"page\":\"2\",\"timestamp\":\"1700000000126\"}",
+    "signToken": "5EE760B395AF955685361DFF09B956C1",
+    "aesKey": "abcdefghijklmnop",
+    "requestIv": "1628092121312213",
+    "aesCiphertext": "pIegyu8fNV2iYniB/s2XdgvWmOeCCRdbiTf6CA8L6QXmT/6HPoWf5NXDxJ85 cEh0w+JxSSg8a/vScHJ7VMHOXQ=="
+  }
+]

@@ -1,0 +1,35 @@
+{
+  "name": "dm-app-5.0.0-android16",
+  "host": "appdmkj.5idream.net",
+  "device": "OnePlus PHK110 Android 16",
+  "source": "docs/network-profile.md",
+  "tlsVersion": "TLS1.2",
+  "httpVersion": "HTTP/1.1",
+  "alpn": null,
+  "http2Settings": null,
+  "ja3": "771,49195-49196-52393-49199-49200-52392-49171-49172-156-157-47-53,0-23-65281-10-11-5-13,29-23-24,0",
+  "ja3Md5": "6c0f0a346dcd84cb4b97a0d9382c53fd",
+  "signatureAlgorithms": [
+    "ecdsa_secp256r1_sha256",
+    "rsa_pss_rsae_sha256",
+    "rsa_pkcs1_sha256",
+    "ecdsa_secp384r1_sha384",
+    "rsa_pss_rsae_sha384",
+    "rsa_pkcs1_sha384",
+    "rsa_pss_rsae_sha512",
+    "rsa_pkcs1_sha512",
+    "rsa_pkcs1_sha1"
+  ],
+  "httpHeaderOrder": [
+    "standardUA",
+    "Content-Type",
+    "Content-Length",
+    "Host",
+    "Connection",
+    "Accept-Encoding",
+    "User-Agent"
+  ],
+  "clientHelloHex": "160301009d0100009903030000000000000000000000000000000000000000000000000000000000000000000018c02bc02ccca9c02fc030cca8c013c014009c009d002f003501000058000000180016000013617070646d6b6a2e3569647265616d2e6e657400170000ff01000100000a00080006001d00170018000b00020100000500050100000000000d00140012040308040401050308050501080606010201",
+  "normalizedClientHelloSha256": "873b429f4729af05e9f0e62cd9624d5e8d729fb84ad8caeceabe0cfcdb43d8c7",
+  "comparisonScope": "Canonical fresh TLS1.2 structural fixture; client_random is zeroed. No original capture is included."
+}

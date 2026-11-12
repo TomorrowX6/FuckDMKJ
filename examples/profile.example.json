@@ -1,0 +1,6 @@
+{
+  "uid": "YOUR_UID",
+  "token": "YOUR_SESSION_TOKEN",
+  "jPushId": "YOUR_JPUSH_ID",
+  "version": "5.0.0"
+}
