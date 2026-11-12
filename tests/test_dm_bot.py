@@ -78,9 +78,9 @@ def test_nonowner_cannot_import_or_grant_and_secret_message_is_deleted(state):
 def test_delegated_uid_permissions_apply_before_any_api_request(state):
     api = API()
     bot = Bot(state, api, OWNER, clients=lambda *_: pytest.fail('Unauthorized API call'))
-    for command in ['/me 42', '/add 42 123', '/cancel 42 123']:
+    for command in ['/me 42', '/list 42', '/add 42 123', '/cancel 42 123']:
         bot.handle(message(command, sender=77))
-    assert len(api.sent) == 3 and all('没有' in text for _, text in api.sent)
+    assert len(api.sent) == 4 and all('没有' in text for _, text in api.sent)
     bot.handle(message('/Permissions 42 77'))
     assert state.allowed('42', 77, OWNER)
     assert not state.allowed('99', 77, OWNER)
@@ -117,6 +117,7 @@ def test_group_cannot_import_even_when_owner_and_credential_is_deleted(state):
 
 def test_delegated_me_returns_personal_info_but_never_session_secrets(state):
     state.grant('42', 77)
+    state.add_job('42', '123', OWNER, OWNER, 'Activity', time.time() + 600)
     api = API()
 
     @contextmanager
@@ -130,6 +131,37 @@ def test_delegated_me_returns_personal_info_but_never_session_secrets(state):
     Bot(state, api, OWNER, clients=clients).handle(message('/me 42', sender=77))
     assert '测试姓名' in api.sent[0][1]
     assert 'secret' not in api.sent[0][1]
+    assert '待抢任务' not in api.sent[0][1] and '123' not in api.sent[0][1]
+
+
+@pytest.mark.parametrize('sender', [OWNER, 77])
+def test_list_returns_only_current_uid_active_jobs_without_app_request(state, sender):
+    state.grant('42', 77)
+    for target in ('111', '222', '333', '444'):
+        job, _ = state.add_job('42', target, OWNER, OWNER, 'Activity', time.time() + 600)
+        if target in ('222', '333'):
+            assert state.claim(job['id'])
+        if target == '333':
+            state.cancel('42', target)
+        if target == '444':
+            state.finish(job['id'], 'success', {})
+    state.put_account('99', dict(PROFILE, uid='99'), json.dumps(UA))
+    state.add_job('99', '555', OWNER, OWNER, 'Other account', time.time() + 600)
+    api = API()
+    Bot(state, api, OWNER, clients=lambda *_: pytest.fail('List must not call the App')).handle(
+        message('/list 42', sender=sender))
+    assert api.sent == [(sender, 'UID：42\n待抢任务：111、222、333')]
+
+
+def test_list_empty_and_invalid_arguments_do_not_call_app(state):
+    api = API()
+    bot = Bot(state, api, OWNER, clients=lambda *_: pytest.fail('List must not call the App'))
+    bot.handle(message('/list 42'))
+    assert api.sent == [(OWNER, 'UID：42\n待抢任务：无')]
+    for command in ('/list', '/list 42 123', '/list invalid'):
+        bot.handle(message(command))
+    assert all('参数数量' in text for _, text in api.sent[1:3])
+    assert 'UID 必须为数字' in api.sent[3][1]
 
 
 def test_expired_token_is_reported_without_automatic_password_login(state):

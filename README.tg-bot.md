@@ -8,7 +8,8 @@
 | `/Permissions uid TGID` | 主人 | 授予 TGID 对该 UID 的控制权；也支持小写 `/permissions` |
 | `/add uid 活动id` | 主人或该 UID 的授权人 | 查询活动、添加持久化待抢任务，自动等开放并报名 |
 | `/cancel uid 活动id` | 主人或该 UID 的授权人 | 停止待抢任务，不调用撤销报名接口 |
-| `/me uid` | 主人或该 UID 的授权人 | 获取个人信息和待抢任务 |
+| `/me uid` | 主人或该 UID 的授权人 | 获取个人信息 |
+| `/list uid` | 主人或该 UID 的授权人 | 查看该 UID 的待抢任务列表，无需请求 App 接口 |
 | `/help`、`/start` | 私聊用户 | 帮助、命令格式与 UA 示例 |
 
 `standardUA` 是 JSON 对象，可包含空格或换行；不要添加外层单引号。Bot 从 JSON 的 `jPushId` 和 `version` 字段读取推送标识和版本号，无需额外参数。完整示例及可直接交给 AI 的说明见 [UA_FORMAT_FOR_AI.md](docs/UA_FORMAT_FOR_AI.md)。

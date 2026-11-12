@@ -36,7 +36,9 @@ HELP = '''命令（私聊使用）：
 /cancel UID 活动ID
   取消待抢任务；不撤销已成功的报名。
 /me UID
-  查询个人信息及该 UID 的待抢任务。
+  查询个人信息。
+/list UID
+  查询该 UID 的待抢任务列表。
 /help
 
 standardUA 直接填写 JSON 对象，不要加外层单引号，内部有空格也支持。
@@ -187,9 +189,9 @@ class Bot:
                 self.store.grant(args[0], int(args[1]))
                 self.telegram.send(chat_id, f'已授权 TGID {args[1]} 控制 UID {args[0]}')
                 return
-            if command not in ('/add', '/cancel', '/me'):
+            if command not in ('/add', '/cancel', '/me', '/list'):
                 raise ValueError('未知命令，请使用 /help')
-            if len(args) != (1 if command == '/me' else 2):
+            if len(args) != (1 if command in ('/me', '/list') else 2):
                 raise ValueError('参数数量不正确，请使用 /help')
             uid = args[0]
             self.authorize(uid, tg_id)
@@ -205,6 +207,11 @@ class Bot:
                     answer = '已取消待抢任务；若正在处理验证码，会在提交前停止'
                 self.telegram.send(chat_id, answer)
                 return
+            if command == '/list':
+                active = [j for j in self.store.jobs(('waiting', 'running', 'cancelling')) if j['uid'] == uid]
+                tasks = '、'.join(j['activity_id'] for j in active) if active else '无'
+                self.telegram.send(chat_id, f'UID：{uid}\n待抢任务：{tasks}')
+                return
             with self.clients(profile, ua) as client:
                 if command == '/me':
                     personal = client.call('/v3/user/mine_homepage', {})
@@ -212,8 +219,6 @@ class Bot:
                     for key, label in [('name', '姓名'), ('nickname', '昵称'), ('cardName', '身份'), ('schoolName', '学校')]:
                         if personal.get(key):
                             lines.append(f'{label}：{str(personal[key])[:150]}')
-                    active = [j for j in self.store.jobs(('waiting', 'running', 'cancelling')) if j['uid'] == uid]
-                    lines.append('待抢任务：' + ('、'.join(j['activity_id'] for j in active) if active else '无'))
                     self.telegram.send(chat_id, '\n'.join(lines))
                     return
                 target = activity_id(args[1])
@@ -362,7 +367,7 @@ def main():
         LOG.info('initial_update_offset_initialized')
     api.call('setMyCommands', commands=[{'command': name, 'description': description} for name, description in
              [('login', '主人导入账号会话'), ('permissions', '主人分配 UID 控制权限'), ('add', '添加抢活动任务'),
-              ('cancel', '取消待抢任务'), ('me', '个人信息和待抢任务'), ('help', '帮助及 UA 示例')]])
+              ('cancel', '取消待抢任务'), ('me', '个人信息'), ('list', '待抢任务列表'), ('help', '帮助及 UA 示例')]])
     scheduler.start()
     try:
         while not stopping.is_set():

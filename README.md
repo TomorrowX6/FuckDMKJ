@@ -58,6 +58,7 @@ python dm_bot.py
 /add UID 活动ID
 /cancel UID 活动ID
 /me UID
+/list UID
 /help
 ```
 
