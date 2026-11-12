@@ -52,7 +52,8 @@ def login_server(monkeypatch, reply):
             key = PKCS1_v1_5.new(private).decrypt(base64.b64decode(rsa), b'bad')
             payload = json.loads(protocol.decode_request(body, key))
             seen.append({'path': self.path, 'headers': dict(self.headers), 'payload': payload, 'body': body})
-            raw = json.dumps(reply, ensure_ascii=False).encode('utf-8')
+            value = reply(self.path, payload) if callable(reply) else reply
+            raw = json.dumps(value, ensure_ascii=False).encode('utf-8')
             encrypted = AES.new(key, AES.MODE_CBC, protocol.RESPONSE_IV).encrypt(pad(raw, 16))
             encoded = protocol.app_b64encode(encrypted).encode('ascii')
             self.send_response(200)
@@ -172,3 +173,44 @@ def test_atomic_profile_replace_failure_preserves_old_file_and_removes_temporary
 def test_authenticated_client_still_requires_token_and_uid():
     with pytest.raises(dm_grab.EnrollmentError, match='token'):
         dm_grab.DmClient(object(), {'version': '5.0.0'}, UA)
+
+
+@pytest.mark.parametrize('sender', [100000001, 77])
+def test_bot_password_login_uses_generated_device_and_verifies_before_granting(tmp_path, monkeypatch, sender):
+    from dm_bot import Bot
+    from dm_bot_store import Store
+    store = Store(tmp_path/'bot.sqlite3')
+    store.grant_login(77)
+
+    class Telegram:
+        def __init__(self): self.sent,self.deleted=[],[]
+        def send(self,chat_id,text): self.sent.append((chat_id,text))
+        def delete(self,chat_id,message_id): self.deleted.append((chat_id,message_id))
+
+    def reply(endpoint, payload):
+        if endpoint == '/v2/login/phone':
+            assert 'uid' not in payload and 'token' not in payload
+            assert payload['pwd'] == login.encrypt_password('password123')
+            return {'code':'100','data':{'uid':'42','token':'fresh-token'}}
+        assert endpoint == '/v3/user/mine_homepage' and payload['uid']=='42'
+        return {'code':'100','data':{'userId':'42'}}
+
+    api = Telegram()
+    with login_server(monkeypatch,reply) as (protocol,seen):
+        bot = Bot(store,api,100000001,
+                  password_clients=lambda ua: login.LoginClient(protocol,ua),
+                  clients=lambda profile,ua: dm_grab.DmClient(protocol,profile,ua))
+        bot.handle({'message':{'message_id':1,'text':'/login example-account password123',
+                    'from':{'id':sender},'chat':{'id':sender,'type':'private'}}})
+    assert len(seen)==2
+    headers = [{key.lower():value for key,value in item['headers'].items()} for item in seen]
+    ua = json.loads(headers[0]['standardua'])
+    assert ua == json.loads(headers[1]['standardua'])
+    assert ua['uuid'] and ua['device']=='OnePlus PHK110' and 'jPushId' not in ua
+    assert 'jPushId' not in seen[0]['payload'] and 'jPushId' not in seen[1]['payload']
+    assert store.account('42')[0]=={'uid':'42','token':'fresh-token','version':'5.0.0'}
+    assert store.allowed('42',sender,100000001)
+    assert not store.allowed('99',77,100000001)
+    assert api.deleted==[(sender,1)] and '42' in api.sent[0][1]
+    assert all('password123' not in text and 'fresh-token' not in text for _,text in api.sent)
+    assert b'password123' not in (tmp_path/'bot.sqlite3').read_bytes()

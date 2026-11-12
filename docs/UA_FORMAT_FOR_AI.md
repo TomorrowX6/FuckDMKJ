@@ -2,6 +2,8 @@
 
 这是到梦空间原生 API 的 `standardUA` JSON 请求头，不是浏览器的 `Mozilla/5.0 ...` User-Agent。
 
+使用 `/login 账号 密码` 时由 Bot 自动生成并保存模拟设备配置，无需提供此 JSON；以下格式用于 `/login UID TOKEN standardUA_JSON` 的会话导入。
+
 可直接复制给 AI 的提示词：
 
 > 请将我提供的到梦空间手机设备信息整理成一个单行、合法的 JSON 对象，作为 standardUA。保留字段名的大小写，时间戳使用毫秒整数，不把整个对象再次编码成字符串。JSON 中包含 jPushId 和 version，Bot 直接从这两个字段读取推送标识和版本号。operator 如来自抓包则保留原有百分号编码。此处不需要 token 和 uid，它们是独立的命令参数。

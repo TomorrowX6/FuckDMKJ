@@ -8,7 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from dm_bot import Bot, Scheduler, Telegram, TelegramError, parse_login, lock_instance
+from dm_bot import Bot, Scheduler, Telegram, TelegramError, parse_login, parse_password_login, lock_instance
+from dm_login import encrypt_password
 from dm_bot_store import Store
 from dm_bot_worker import Worker, JobCancelled
 from dm_grab import BusinessError
@@ -50,7 +51,7 @@ def test_login_json_spaces_are_preserved_and_header_values_checked():
 
 
 @pytest.mark.parametrize('field,value', [
-    ('jPushId', None), ('jPushId', ''), ('jPushId', False), ('jPushId', 123),
+    ('jPushId', False), ('jPushId', 123),
     ('jPushId', 'bad push'), ('jPushId', 'x' * 257),
     ('version', None), ('version', ''), ('version', False), ('version', 500),
     ('version', '5.0'),
@@ -65,11 +66,115 @@ def test_login_requires_push_and_version_in_ua(field, value):
         parse_login('42 secret-token ' + json.dumps(ua))
 
 
+@pytest.mark.parametrize('push', [None, ''])
+def test_session_import_allows_unregistered_push_id(push):
+    ua = dict(UA)
+    if push is None:
+        ua.pop('jPushId')
+    else:
+        ua['jPushId'] = push
+    profile, header = parse_login('42 secret-token ' + json.dumps(ua))
+    assert profile == {'uid':'42','token':'secret-token','version':'5.0.0'}
+    assert 'jPushId' not in json.loads(header)
+
+
+@pytest.mark.parametrize('password', ['password123', r'p\a$$word', ' Pass word! '])
+def test_password_login_parser_preserves_special_characters(password):
+    argument = json.dumps(password) if ' ' in password else password
+    assert parse_password_login('example-account ' + argument) == ('example-account', password)
+
+
+@pytest.mark.parametrize('arguments', ['', 'account', 'account ""', 'account "unterminated', 'account two words'])
+def test_password_login_parser_rejects_incomplete_input(arguments):
+    with pytest.raises(ValueError):
+        parse_password_login(arguments)
+
+
+def test_permissions_one_persists_login_access_without_other_uid_control(state):
+    api = API()
+    bot = Bot(state, api, OWNER, clients=lambda *_: pytest.fail('No App request required'))
+    bot.handle(message('/permissions 1 77', sender=77))
+    assert not state.can_login(77, OWNER)
+    bot.handle(message('/permissions 1 77'))
+    restarted = Store(state.path)
+    assert restarted.can_login(77, OWNER) and restarted.can_login(OWNER, OWNER)
+    assert not restarted.allowed('42', 77, OWNER)
+    assert not restarted.allowed('99', 77, OWNER)
+    with pytest.raises(ValueError):
+        restarted.account('1')
+
+
+@pytest.mark.parametrize('command', ['/login account password123', '/login 42 token {}'])
+def test_uid_permission_alone_does_not_allow_either_login_mode(state, command):
+    state.grant('42', 77)
+    api = API()
+    denied = lambda *_: pytest.fail('Login authorization must precede any request')
+    Bot(state, api, OWNER, clients=denied, password_clients=denied).handle(message(command, sender=77))
+    assert not state.can_login(77, OWNER)
+    assert api.deleted == [(77, 123)] and '/permissions 1' in api.sent[0][1]
+
+
+def test_login_grantee_can_import_and_only_gains_verified_uid(state):
+    state.grant_login(77)
+    api = API()
+
+    @contextmanager
+    def clients(profile, ua):
+        yield SimpleNamespace(call=lambda *_: {'userId':'42'})
+
+    bot = Bot(state, api, OWNER, clients=clients,
+              password_clients=lambda *_: pytest.fail('Token import must not use password login'))
+    bot.handle(message('/login 42 fresh-token ' + json.dumps(UA), sender=77))
+    assert state.account('42')[0]['token'] == 'fresh-token'
+    assert state.allowed('42', 77, OWNER) and not state.allowed('99', 77, OWNER)
+    bot.handle(message('/permissions 99 88', sender=77))
+    assert '仅主人' in api.sent[-1][1]
+
+
+@pytest.mark.parametrize('uid_matches', [True, False])
+def test_password_login_redacts_errors_and_never_saves_failed_session(state, uid_matches):
+    state.grant_login(77)
+    api = API()
+    password = 'password123'
+    wrapped = encrypt_password(password)
+
+    @contextmanager
+    def passwords(ua):
+        if not uid_matches:
+            yield SimpleNamespace(login=lambda *_: dict(PROFILE, token='fresh-token'))
+        else:
+            def rejected(*_):
+                raise BusinessError('400', password + ' ' + wrapped)
+            yield SimpleNamespace(login=rejected)
+
+    @contextmanager
+    def clients(*_):
+        yield SimpleNamespace(call=lambda *_: {'userId':'99'})
+
+    Bot(state, api, OWNER, clients=clients, password_clients=passwords).handle(
+        message('/login account ' + password, sender=77))
+    assert state.account('42')[0] == PROFILE
+    assert not state.allowed('42', 77, OWNER)
+    assert all(password not in text and wrapped not in text and 'fresh-token' not in text for _,text in api.sent)
+    assert password.encode() not in state.path.read_bytes()
+
+
+def test_password_login_group_is_rejected_before_device_or_network_access(state):
+    state.grant_login(77)
+    api = API()
+    denied = lambda *_: pytest.fail('Group login must not request App')
+    Bot(state,api,OWNER,clients=denied,password_clients=denied).handle(
+        message('/login account password123',sender=77,chat_type='group'))
+    assert api.deleted == [(-123,123)]
+    with state.connection() as db:
+        assert db.execute('SELECT COUNT(*) FROM login_devices').fetchone()[0] == 0
+
+
 def test_nonowner_cannot_import_or_grant_and_secret_message_is_deleted(state):
     api = API()
     bot = Bot(state, api, OWNER, clients=lambda *_: pytest.fail('No API calls allowed'))
     bot.handle(message('/login 99 stolen-token {}', sender=77))
-    bot.handle(message('/Permissions 42 77', sender=77))
+    bot.handle(message('/permissions 42 77', sender=77))
     assert not state.allowed('42', 77, OWNER)
     assert api.deleted == [(77, 123)]
     assert all('主人' in text and 'stolen-token' not in text for _, text in api.sent)
@@ -81,7 +186,7 @@ def test_delegated_uid_permissions_apply_before_any_api_request(state):
     for command in ['/me 42', '/list 42', '/add 42 123', '/cancel 42 123']:
         bot.handle(message(command, sender=77))
     assert len(api.sent) == 4 and all('没有' in text for _, text in api.sent)
-    bot.handle(message('/Permissions 42 77'))
+    bot.handle(message('/permissions 42 77'))
     assert state.allowed('42', 77, OWNER)
     assert not state.allowed('99', 77, OWNER)
 

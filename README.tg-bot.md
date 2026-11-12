@@ -4,17 +4,23 @@
 
 | 命令 | 权限 | 功能 |
 | --- | --- | --- |
-| `/login UID TOKEN standardUA_JSON` | 主人 | 导入会话，查询个人主页核对 UID，成功后保存 |
-| `/Permissions uid TGID` | 主人 | 授予 TGID 对该 UID 的控制权；也支持小写 `/permissions` |
+| `/login 账号 密码` | 主人或获准登录的用户 | 自动生成或复用模拟设备配置，密码登录并查询个人主页核对 UID，成功后保存会话 |
+| `/login UID TOKEN standardUA_JSON` | 主人或获准登录的用户 | 导入会话，查询个人主页核对 UID，成功后保存 |
+| `/permissions 1 TGID` | 主人 | 开通该 TGID 的两种登录方式；验证成功后自动获得对应 UID 控制权 |
+| `/permissions uid TGID` | 主人 | 授予 TGID 对该 UID 的控制权；UID 1 保留为登录权限开关 |
 | `/add uid 活动id` | 主人或该 UID 的授权人 | 查询活动、添加持久化待抢任务，自动等开放并报名 |
 | `/cancel uid 活动id` | 主人或该 UID 的授权人 | 停止待抢任务，不调用撤销报名接口 |
 | `/me uid` | 主人或该 UID 的授权人 | 获取个人信息 |
 | `/list uid` | 主人或该 UID 的授权人 | 查看该 UID 的待抢任务列表，无需请求 App 接口 |
 | `/help`、`/start` | 私聊用户 | 帮助、命令格式与 UA 示例 |
 
-`standardUA` 是 JSON 对象，可包含空格或换行；不要添加外层单引号。Bot 从 JSON 的 `jPushId` 和 `version` 字段读取推送标识和版本号，无需额外参数。完整示例及可直接交给 AI 的说明见 [UA_FORMAT_FOR_AI.md](docs/UA_FORMAT_FOR_AI.md)。
+`standardUA` 是 JSON 对象，可包含空格或换行；不要添加外层单引号。Bot 从 JSON 的 `jPushId` 和 `version` 字段读取推送标识和版本号，无需额外参数。`version` 必填，未注册的 `jPushId` 可省略。完整示例及可直接交给 AI 的说明见 [UA_FORMAT_FOR_AI.md](docs/UA_FORMAT_FOR_AI.md)。
 
 会话导入消息会尝试删除，token 不回显；数据库和任务目录限制为服务用户访问。会话返回 10007 时停止并提示更新 token。
+
+账号密码登录的消息也会尝试删除，密码和密码密文不写入数据库、日志或回复。密码包含空格时使用 JSON 双引号：`/login ACCOUNT "Pass word!"`。登录失败或个人主页返回的 UID 不一致时，不替换已保存的账号，不新增 UID 控制权限。没有登录授权的用户仍可使用已获准 UID 的 `/me`、`/list`、`/add`、`/cancel`。
+
+模拟 UA 使用固定的 OnePlus PHK110 / Android 16 参数模板。每个账号独立保存安装 UUID 和创建时间，后续登录复用，启动时间更新；账号索引保存为摘要。`jPushId` 来自真实极光注册，模拟配置不伪造该字段。该配置不是物理设备证明，不保证服务端所有接口接受。数据库中的 `login_devices`、`login_grants` 在启动时增量创建。
 
 每个 UID/活动仅允许一个活动中的任务。任务在开放前约 90 秒启动隔离的报名进程与 Chromium；同一进程复用浏览器缓存，最后预热 SDK，并在开放前约 12 秒预热只读连接，预热预算保留至少 3 秒余量。非必填项和备注统一为空。返回成功、失败、取消或待核对状态时通知任务创建者；授权用户创建的任务同时通知主人。默认最多并行 4 个任务，可用 `DM_MAX_ACTIVE_JOBS` 调整。
 

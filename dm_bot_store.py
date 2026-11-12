@@ -1,10 +1,13 @@
 """Private SQLite state, per-account grants and durable job transitions."""
 from contextlib import contextmanager
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
 import time
 import uuid
+
+from dm_device import simulated_ua
 
 TERMINAL = frozenset({'success', 'failed', 'cancelled', 'uncertain'})
 
@@ -30,6 +33,9 @@ class Store:
                 CREATE UNIQUE INDEX IF NOT EXISTS active_job ON jobs(uid,activity_id)
                     WHERE status IN ('waiting','running','cancelling');
                 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS login_devices(account_key TEXT PRIMARY KEY,
+                    standard_ua TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS login_grants(tg_id INTEGER PRIMARY KEY);
             ''')
         self.path.chmod(0o600)
 
@@ -54,11 +60,34 @@ class Store:
             raise ValueError('此 UID 尚未导入，请联系主人使用 /login')
         return json.loads(row['profile']), row['standard_ua']
 
-    def put_account(self, uid, profile, standard_ua):
+    def put_account(self, uid, profile, standard_ua, *, controller=None):
         with self.connection() as db:
             db.execute('''INSERT INTO accounts VALUES(?,?,?,?) ON CONFLICT(uid) DO UPDATE SET
                           profile=excluded.profile,standard_ua=excluded.standard_ua,updated=excluded.updated''',
                        (uid, json.dumps(profile), standard_ua, time.time()))
+            if controller is not None:
+                db.execute('INSERT OR IGNORE INTO grants VALUES(?,?)', (uid, controller))
+
+    def can_login(self, tg_id, owner):
+        if tg_id == owner:
+            return True
+        with self.connection() as db:
+            return db.execute('SELECT 1 FROM login_grants WHERE tg_id=?', (tg_id,)).fetchone() is not None
+
+    def grant_login(self, tg_id):
+        with self.connection() as db:
+            db.execute('INSERT OR IGNORE INTO login_grants VALUES(?)', (tg_id,))
+
+    def login_device(self, account):
+        account_key = hashlib.sha256(account.strip().encode('utf-8')).hexdigest()
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT standard_ua FROM login_devices WHERE account_key=?', (account_key,)).fetchone()
+            ua = simulated_ua(json.loads(row[0]) if row else None)
+            serialized = json.dumps(ua, ensure_ascii=False, separators=(',', ':'))
+            db.execute('''INSERT INTO login_devices VALUES(?,?) ON CONFLICT(account_key)
+                          DO UPDATE SET standard_ua=excluded.standard_ua''', (account_key, serialized))
+        return serialized
 
     def allowed(self, uid, tg_id, owner):
         if tg_id == owner:

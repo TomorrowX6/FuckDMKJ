@@ -16,6 +16,7 @@ import requests
 
 from dm_bot_store import Store, TERMINAL
 from dm_grab import DmClient, EnrollmentError, activity_id, assess_detail, load_protocol
+from dm_login import LoginClient, encrypt_password
 
 ROOT = Path(__file__).resolve().parent
 LOG = logging.getLogger('dm_bot')
@@ -27,10 +28,14 @@ UA_EXAMPLE = {'channelName': 'dmkj_Android', 'countryCode': 'CN', 'createTime': 
               'sysVersion': 'Android 36 16', 'system': 'android',
               'uuid': '00000000000000000000000000000000', 'version': '5.0.0'}
 HELP = '''命令（私聊使用）：
+/login 账号 密码
+  主人或获准登录的用户使用账号密码登录，自动保存模拟设备配置和会话；密码不保存。
 /login UID TOKEN standardUA_JSON
-  主人导入现有会话，验证后保存；不执行密码登录。
-/Permissions UID TGID
-  主人为 TGID 授予该 UID 的控制权限，也支持 /permissions。
+  主人或获准登录的用户导入现有会话，验证后保存。
+/permissions UID TGID
+  主人为 TGID 授予该 UID 的控制权限。
+/permissions 1 TGID
+  主人为 TGID 开通两种 /login；成功后自动获得对应 UID 的控制权。
 /add UID 活动ID
   添加待抢任务，自动等待开放、验证和报名。
 /cancel UID 活动ID
@@ -42,7 +47,9 @@ HELP = '''命令（私聊使用）：
 /help
 
 standardUA 直接填写 JSON 对象，不要加外层单引号，内部有空格也支持。
-jPushId 和版本号直接读取 JSON 中的 jPushId、version。
+jPushId 和版本号直接读取 JSON 中的 jPushId、version；未注册的 jPushId 可省略。
+账号密码登录无需填写 UA；设备 UUID 按账号复用，未注册的 jPushId 不伪造。
+密码含空格时用 JSON 双引号包裹，例如 /login ACCOUNT "Pass word!"。
 示例（替换为真实手机数据和会话）：
 /login 123456 YOUR_TOKEN ''' + json.dumps(UA_EXAMPLE, ensure_ascii=False, separators=(',', ':'))
 
@@ -72,12 +79,36 @@ def parse_login(arguments):
     if tail[consumed:].strip():
         raise ValueError('JSON 后不需要其他参数；jPushId 和 version 从 JSON 读取')
     push, version = ua.get('jPushId'), ua.get('version')
-    if (not isinstance(push, str) or not push.strip() or len(push) > 256
+    if push not in (None, '') and (not isinstance(push, str) or len(push) > 256
             or any(character.isspace() for character in push)):
-        raise ValueError('standardUA 中必须包含有效的 jPushId 字符串')
+        raise ValueError('standardUA 中的 jPushId 必须是有效字符串或省略')
     if not isinstance(version, str) or not re.fullmatch(r'\d+\.\d+\.\d+(?:[-+._A-Za-z0-9]*)?', version):
         raise ValueError('standardUA 中必须包含有效的 version 字符串')
-    return {'uid': uid, 'token': token, 'jPushId': push, 'version': version}, json.dumps(ua, ensure_ascii=False, separators=(',', ':'))
+    profile = {'uid': uid, 'token': token, 'version': version}
+    if push:
+        profile['jPushId'] = push
+    else:
+        ua.pop('jPushId', None)
+    return profile, json.dumps(ua, ensure_ascii=False, separators=(',', ':'))
+
+
+def parse_password_login(arguments):
+    fields = arguments.strip().split(None, 1)
+    if len(fields) != 2:
+        raise ValueError('格式：/login 账号 密码，或 /login UID TOKEN standardUA_JSON')
+    account, password = fields
+    if password.startswith('"'):
+        try:
+            password = json.loads(password)
+        except ValueError:
+            raise ValueError('密码双引号格式无效，请使用 JSON 字符串格式') from None
+    elif any(character.isspace() for character in password):
+        raise ValueError('密码含空格时请用 JSON 双引号包裹')
+    if len(account) > 128 or not account.isprintable():
+        raise ValueError('账号格式无效')
+    if not isinstance(password, str) or not password or len(password) > 1024:
+        raise ValueError('密码格式无效')
+    return account, password
 
 
 class TelegramError(RuntimeError):
@@ -116,6 +147,10 @@ def client_factory(profile, ua):
     return DmClient(protocol, profile, ua, transport='curl', network_profile='app')
 
 
+def password_client_factory(ua):
+    return LoginClient(load_protocol(ROOT / 'dm_cli.py'), ua)
+
+
 def lock_instance(path):
     handle = Path(path).open('a+b')
     try:
@@ -136,8 +171,9 @@ def lock_instance(path):
 
 
 class Bot:
-    def __init__(self, store, telegram, owner, *, clients=client_factory):
+    def __init__(self, store, telegram, owner, *, clients=client_factory, password_clients=password_client_factory):
         self.store, self.telegram, self.owner, self.clients = store, telegram, int(owner), clients
+        self.password_clients = password_clients
 
     def authorize(self, uid, sender):
         uid_value(uid)
@@ -166,26 +202,43 @@ class Bot:
             self.telegram.send(chat_id, '请在与机器人的私聊中使用命令')
             return
         profile = None
+        login_secrets = []
         try:
             if command in ('/help', '/start'):
                 self.telegram.send(chat_id, HELP)
                 return
-            if command in ('/login', '/permissions') and tg_id != self.owner:
+            if command == '/permissions' and tg_id != self.owner:
                 raise ValueError('此命令仅主人可用')
             if command == '/login':
-                profile, ua = parse_login(arguments)
+                if not self.store.can_login(tg_id, self.owner):
+                    raise ValueError('仅主人或获准登录的用户可用，请联系主人使用 /permissions 1 TGID 授权')
+                fields = arguments.split(None, 2)
+                if len(fields) <= 2 or fields[1].startswith('"'):
+                    account, password = parse_password_login(arguments)
+                    login_secrets.extend((password, encrypt_password(password)))
+                    ua = self.store.login_device(account)
+                    with self.password_clients(ua) as client:
+                        profile = client.login(account, password)
+                    password = ''
+                else:
+                    profile, ua = parse_login(arguments)
                 with self.clients(profile, ua) as client:
                     personal = client.call('/v3/user/mine_homepage', {})
                 if str(personal.get('userId')) != profile['uid']:
                     raise ValueError('返回的用户标识与 UID 不一致，未导入')
-                self.store.put_account(profile['uid'], profile, ua)
+                self.store.put_account(profile['uid'], profile, ua,
+                                       controller=tg_id if tg_id != self.owner else None)
                 self.telegram.send(chat_id, f"UID {profile['uid']} 会话验证成功，已保存。token 不会回显。")
                 return
             args = arguments.split()
             if command == '/permissions':
                 if len(args) != 2 or not args[1].isdigit() or not 0 < int(args[1]) < 2**63:
-                    raise ValueError('格式：/Permissions UID TGID')
+                    raise ValueError('格式：/permissions UID TGID')
                 uid_value(args[0])
+                if args[0] == '1':
+                    self.store.grant_login(int(args[1]))
+                    self.telegram.send(chat_id, f'已授权 TGID {args[1]} 使用两种 /login；验证成功后自动获得对应 UID 控制权')
+                    return
                 self.store.grant(args[0], int(args[1]))
                 self.telegram.send(chat_id, f'已授权 TGID {args[1]} 控制 UID {args[0]}')
                 return
@@ -235,13 +288,20 @@ class Bot:
             explanation = str(error)
             if profile and profile.get('token'):
                 explanation = explanation.replace(profile['token'], '[hidden]')
+            for secret in login_secrets:
+                explanation = explanation.replace(secret, '[hidden]')
             if command == '/login':
                 pieces = arguments.split(None, 2)
                 if len(pieces) >= 2:
                     explanation = explanation.replace(pieces[1], '[hidden]')
             if getattr(error, 'code', None) == '10007':
-                explanation = '会话已失效，请联系主人重新导入手机当前 token；机器人不会自动密码登录'
+                explanation = '会话已失效，请联系主人重新 /login；机器人不会自动重试密码登录'
             self.telegram.send(chat_id, explanation[:1000])
+        except Exception as error:
+            if command != '/login' or isinstance(error, TelegramError):
+                raise
+            LOG.warning('login_request_error type=%s', type(error).__name__)
+            self.telegram.send(chat_id, '登录请求未完成，结果未确认，请稍后手动重试')
 
 
 class Scheduler:
@@ -366,7 +426,7 @@ def main():
         store.offset(pending[-1]['update_id'] + 1 if pending else 0)
         LOG.info('initial_update_offset_initialized')
     api.call('setMyCommands', commands=[{'command': name, 'description': description} for name, description in
-             [('login', '主人导入账号会话'), ('permissions', '主人分配 UID 控制权限'), ('add', '添加抢活动任务'),
+             [('login', '密码登录或导入会话（需授权）'), ('permissions', '主人分配 UID 或登录权限'), ('add', '添加抢活动任务'),
               ('cancel', '取消待抢任务'), ('me', '个人信息'), ('list', '待抢任务列表'), ('help', '帮助及 UA 示例')]])
     scheduler.start()
     try:
