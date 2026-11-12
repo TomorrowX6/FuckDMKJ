@@ -179,6 +179,7 @@ def test_authenticated_client_still_requires_token_and_uid():
 def test_bot_password_login_uses_generated_device_and_verifies_before_granting(tmp_path, monkeypatch, sender):
     from dm_bot import Bot
     from dm_bot_store import Store
+    from dm_device import load_profiles, device_name
     store = Store(tmp_path/'bot.sqlite3')
     store.grant_login(77)
 
@@ -206,7 +207,7 @@ def test_bot_password_login_uses_generated_device_and_verifies_before_granting(t
     headers = [{key.lower():value for key,value in item['headers'].items()} for item in seen]
     ua = json.loads(headers[0]['standardua'])
     assert ua == json.loads(headers[1]['standardua'])
-    assert ua['uuid'] and ua['device']=='OnePlus PHK110' and 'jPushId' not in ua
+    assert ua['uuid'] and ua['device'] in {device_name(profile) for profile in load_profiles()} and 'jPushId' not in ua
     assert 'jPushId' not in seen[0]['payload'] and 'jPushId' not in seen[1]['payload']
     assert store.account('42')[0]=={'uid':'42','token':'fresh-token','version':'5.0.0'}
     assert store.allowed('42',sender,100000001)

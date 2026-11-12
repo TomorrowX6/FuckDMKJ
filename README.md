@@ -66,7 +66,7 @@ python dm_bot.py
 
 主人可使用两种登录方式，并通过 `/permissions 1 TGID` 为其他用户开通登录权限。获准用户登录或导入验证成功后，自动获得对应 UID 的控制权；仅有某个 UID 的控制权限不会自动获得登录权限。`/permissions UID TGID` 继续用于单独授权账号。`/cancel` 只停止待抢任务，不撤销成功报名。
 
-账号密码登录自动按账号保存模拟设备配置，采用 OnePlus PHK110、Android 16 的机型参数，设备 UUID 跨重启复用，启动时间随登录更新。未注册的 `jPushId` 省略，密码不保存。含空格的密码可写成 JSON 字符串：`/login ACCOUNT "Pass word!"`。模拟配置不代表物理手机或设备认证。
+账号密码登录自动按账号保存模拟设备配置：新账号从 [16 套开源手机配置](device_profiles/README.md)中整组选择，优先避免重复机型，配置池用完后均衡分配。设备 UUID 跨重启复用，启动时间随登录更新。token 导入保留完整 UA，已有账密配置继续复用。未注册的 `jPushId` 省略，密码不保存。含空格的密码可写成 JSON 字符串：`/login ACCOUNT "Pass word!"`。模拟配置不代表物理手机或设备认证。
 
 [Bot 使用与部署](README.tg-bot.md) · [给 AI 使用的 UA 格式](docs/UA_FORMAT_FOR_AI.md) · [隐私与文件说明](docs/privacy.md)
 

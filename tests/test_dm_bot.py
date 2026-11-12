@@ -75,7 +75,7 @@ def test_session_import_allows_unregistered_push_id(push):
         ua['jPushId'] = push
     profile, header = parse_login('42 secret-token ' + json.dumps(ua))
     assert profile == {'uid':'42','token':'secret-token','version':'5.0.0'}
-    assert 'jPushId' not in json.loads(header)
+    assert json.loads(header) == ua
 
 
 @pytest.mark.parametrize('password', ['password123', r'p\a$$word', ' Pass word! '])
@@ -129,6 +129,30 @@ def test_login_grantee_can_import_and_only_gains_verified_uid(state):
     assert state.allowed('42', 77, OWNER) and not state.allowed('99', 77, OWNER)
     bot.handle(message('/permissions 99 88', sender=77))
     assert '仅主人' in api.sent[-1][1]
+
+
+@pytest.mark.parametrize('push', ['real-push', '', None])
+def test_token_import_preserves_entire_supplied_device_configuration(state, monkeypatch, push):
+    state.grant_login(77)
+    supplied = dict(UA, device='Existing Phone', hardware='existing-hardware',
+                    uuid='existing-device-uuid', sysVersion='Android 33 13', version='5.1.0',
+                    screenResolution='1080-2300', startTime=1700000000000,
+                    createTime=1690000000000, jPushId=push, extraField='keep-me')
+    monkeypatch.setattr(state,'login_device',lambda *_: pytest.fail('Token import must preserve its UA'))
+
+    @contextmanager
+    def clients(profile, ua):
+        assert json.loads(ua) == supplied
+        yield SimpleNamespace(call=lambda *_: {'userId':'42'})
+
+    api = API()
+    Bot(state,api,OWNER,clients=clients,
+        password_clients=lambda *_: pytest.fail('Token import cannot use password login')).handle(
+            message('/login 42 fresh-token '+json.dumps(supplied),sender=77))
+    assert json.loads(state.account('42')[1]) == supplied
+    assert state.allowed('42',77,OWNER)
+    with state.connection() as db:
+        assert db.execute('SELECT COUNT(*) FROM login_devices').fetchone()[0] == 0
 
 
 @pytest.mark.parametrize('uid_matches', [True, False])

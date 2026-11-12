@@ -83,7 +83,18 @@ class Store:
         with self.connection() as db:
             db.execute('BEGIN IMMEDIATE')
             row = db.execute('SELECT standard_ua FROM login_devices WHERE account_key=?', (account_key,)).fetchone()
-            ua = simulated_ua(json.loads(row[0]) if row else None)
+            used = []
+            if row is None:
+                installations = set()
+                for item in db.execute('SELECT standard_ua FROM login_devices UNION ALL SELECT standard_ua FROM accounts'):
+                    known = json.loads(item[0])
+                    if not isinstance(known,dict) or not isinstance(known.get('device'),str):
+                        continue
+                    identity = (known['device'],json.dumps(known.get('uuid'),sort_keys=True))
+                    if identity not in installations:
+                        installations.add(identity)
+                        used.append(known['device'])
+            ua = simulated_ua(json.loads(row[0]) if row else None, used_devices=used)
             serialized = json.dumps(ua, ensure_ascii=False, separators=(',', ':'))
             db.execute('''INSERT INTO login_devices VALUES(?,?) ON CONFLICT(account_key)
                           DO UPDATE SET standard_ua=excluded.standard_ua''', (account_key, serialized))

@@ -49,6 +49,7 @@ HELP = '''命令（私聊使用）：
 standardUA 直接填写 JSON 对象，不要加外层单引号，内部有空格也支持。
 jPushId 和版本号直接读取 JSON 中的 jPushId、version；未注册的 jPushId 可省略。
 账号密码登录无需填写 UA；设备 UUID 按账号复用，未注册的 jPushId 不伪造。
+新账密账号优先分配不同机型，已有设备配置复用；token 导入保留原 UA。
 密码含空格时用 JSON 双引号包裹，例如 /login ACCOUNT "Pass word!"。
 示例（替换为真实手机数据和会话）：
 /login 123456 YOUR_TOKEN ''' + json.dumps(UA_EXAMPLE, ensure_ascii=False, separators=(',', ':'))
@@ -87,8 +88,6 @@ def parse_login(arguments):
     profile = {'uid': uid, 'token': token, 'version': version}
     if push:
         profile['jPushId'] = push
-    else:
-        ua.pop('jPushId', None)
     return profile, json.dumps(ua, ensure_ascii=False, separators=(',', ':'))
 
 
