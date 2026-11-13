@@ -27,6 +27,7 @@ SUBMIT = '/v2/signup/submit'
 RESULT = '/v2/signup/result'
 READ_ONLY_ENDPOINTS = frozenset({DETAIL, INFO, RESULT, '/v3/user/unread', '/v3/user/mine_homepage'})
 CHINA = timezone(timedelta(hours=8))
+CAPTCHA_HINT = '8cbcfc2941f6455d9f499f01bcb7186c'
 
 
 class EnrollmentError(Exception):
@@ -35,6 +36,10 @@ class EnrollmentError(Exception):
 
 class EnrollmentUncertain(EnrollmentError):
     pass
+
+
+class CaptchaSessionChanged(EnrollmentError):
+    """Raised only before a request is sent or its durable submit gate is entered."""
 
 
 class BusinessError(EnrollmentError):
@@ -296,7 +301,8 @@ class DmClient:
 
 class EnrollmentRunner:
     def __init__(self, client, *, clock=time.time, sleep=time.sleep, emit=None,
-                 max_attempts=10, retry_interval=1, result_timeout=60, captcha_solver=None):
+                 max_attempts=10, retry_interval=1, result_timeout=60, captcha_solver=None,
+                 captcha_hint=CAPTCHA_HINT, captcha_session=None):
         self.client = client
         self.clock = clock
         self.sleep = sleep
@@ -305,6 +311,9 @@ class EnrollmentRunner:
         self.retry_interval = retry_interval
         self.result_timeout = result_timeout
         self.captcha_solver = captcha_solver
+        self.captcha_hint = captcha_hint
+        self.captcha_session = captcha_session or (lambda: (
+            getattr(self.client, 'profile', {}), getattr(self.client, 'standard_ua', '')))
 
     def prepare_captcha(self, captcha_id=None):
         prepare = getattr(self.captcha_solver, 'prepare', None)
@@ -314,8 +323,9 @@ class EnrollmentRunner:
             except RuntimeError as error:
                 self.emit('warmup_warning', message=f'预热未完成，到点重新加载：{error}')
 
-    def wait_until(self, when, *, prepare=None):
+    def wait_until(self, when, *, prepare=None, prefetch=None):
         prepared = False
+        prefetched = False
         while when > self.clock():
             remaining = when - self.clock()
             if prepare is not None and not prepared and remaining <= 30:
@@ -324,10 +334,17 @@ class EnrollmentRunner:
                     prepare()
                 prepared = True
                 continue
+            if prefetch is not None and not prefetched and remaining <= 12:
+                prefetched = True
+                if remaining >= 5:
+                    prefetch(timeout=min(10, remaining - 2))
+                continue
             self.emit('waiting', message=f'距离提交还有 {remaining:.1f} 秒')
             delay = min(30, remaining)
             if prepare is not None and not prepared:
                 delay = min(delay, max(0.01, remaining - 30))
+            if prefetch is not None and not prefetched:
+                delay = min(delay, max(0.01, remaining - 12))
             self.sleep(delay)
 
     def success(self, signup_id, already=False):
@@ -382,6 +399,39 @@ class EnrollmentRunner:
         when = at if at is not None else number(detail.get('joinstartdate')) / 1000
         can_prepare = (not dry_run and not validate and
                        callable(getattr(self.captcha_solver, 'prepare', None)))
+        can_prefetch = (not dry_run and not validate and not captcha_value and
+                        callable(getattr(self.captcha_solver, 'solve', None)))
+        # Per-run only: never carry a validate into another activity or retry.
+        prefetched = None
+        prefetch_attempted = False
+
+        def valid_solution(value):
+            return (isinstance(value, dict) and isinstance(value.get('validate'), str)
+                    and bool(value['validate'].strip()))
+
+        def prefetch(captcha_id, *, timeout):
+            nonlocal prefetched, prefetch_attempted
+            if not can_prefetch or not captcha_id or prefetch_attempted:
+                return
+            prefetch_attempted = True
+            session = copy.deepcopy(self.captcha_session())
+            began = self.clock()
+            self.emit('captcha_prefetch_started', message='提前完成验证码验证', timeout=timeout)
+            try:
+                solution = self.captcha_solver.solve(str(captcha_id), timeout=timeout)
+            except RuntimeError as error:
+                self.emit('captcha_prefetch_failed', message='提前验证未完成，到点重新验证',
+                          errorType=type(error).__name__, elapsedSeconds=self.clock() - began)
+                return
+            if not valid_solution(solution):
+                self.emit('captcha_prefetch_failed', message='提前验证结果无效，到点重新验证')
+            elif session != self.captcha_session():
+                self.emit('captcha_prefetch_discarded', message='会话已更新，到点重新验证', reason='session_changed')
+            else:
+                prefetched = (str(captcha_id), solution, self.clock(), session)
+                self.emit('captcha_prefetch_ready', message='提前验证完成，等待开放',
+                          elapsedSeconds=self.clock() - began)
+
         for attempt in range(1, self.max_attempts + 1):
             try:
                 form = self.client.call(INFO, {'activityId': target})
@@ -394,13 +444,31 @@ class EnrollmentRunner:
                     raise EnrollmentError(f'读取报名表达到重试次数上限：{error}') from error
                 if when > self.clock():
                     self.emit('form_wait', message='报名表尚未开放，到报名时间重新读取')
-                    self.wait_until(when, prepare=self.prepare_captcha if can_prepare else None)
+                    self.wait_until(when, prepare=self.prepare_captcha if can_prepare else None,
+                                    prefetch=(lambda **kw: prefetch(self.captcha_hint, **kw)) if can_prefetch else None)
                 else:
                     self.sleep(self.retry_interval)
         fields = prepare_fields(form, answers or {}, prompt)
         params = {'activityId': target, 'data': json.dumps(fields, ensure_ascii=False,
                   separators=(',', ':')), 'remark': '',
                   'useNumber': '0'}
+
+        def solve_captcha():
+            try:
+                return self.captcha_solver(str(form['captchaId']))
+            except RuntimeError as error:
+                raise EnrollmentError(f'自动验证码失败：{error}') from error
+
+        def use_solution(solution):
+            if not valid_solution(solution):
+                raise EnrollmentError('自动验证码模块未返回有效的验证结果')
+            params.pop('useNumberDate', None)
+            if solution.get('useNumberDate'):
+                params['useNumberDate'] = str(solution['useNumberDate'])
+            params['useNumber'] = str(solution.get('useNumber') or '1')
+            params['validate'] = solution['validate']
+            return solution['validate']
+
         if dry_run:
             if validate:
                 params.update(validate=validate, useNumber='1')
@@ -415,24 +483,33 @@ class EnrollmentRunner:
         warmup = None
         if can_prepare and truth(form.get('openCaptcha')) and form.get('captchaId'):
             warmup = lambda: self.prepare_captcha(str(form['captchaId']))
-        self.wait_until(when, prepare=warmup)
+        early = None
+        if can_prefetch and truth(form.get('openCaptcha')) and form.get('captchaId'):
+            early = lambda **kw: prefetch(str(form['captchaId']), **kw)
+        self.wait_until(when, prepare=warmup, prefetch=early)
         if number(detail.get('joinenddate')) and self.clock() * 1000 >= number(detail['joinenddate']):
             raise EnrollmentError('报名时间已结束')
+        automatic_validate = (not validate and self.captcha_solver is not None and
+                              truth(form.get('openCaptcha')) and bool(form.get('captchaId')))
         if truth(form.get('openCaptcha')) and form.get('captchaId'):
             captcha_solution = None
+            if prefetched is not None:
+                cid, solution, completed, session = prefetched
+                prefetched = None
+                age = self.clock() - completed
+                reason = ('captcha_id_changed' if cid != str(form['captchaId']) else
+                          'stale' if not 0 <= age <= 15 else
+                          'session_changed' if session != self.captcha_session() else None)
+                if reason:
+                    self.emit('captcha_prefetch_discarded', message='提前验证结果不适用，重新验证',
+                              reason=reason, ageSeconds=age)
+                else:
+                    captcha_solution = solution
+                    self.emit('captcha_prefetch_reused', message='使用刚完成的验证码结果', ageSeconds=age)
             if not validate and self.captcha_solver is not None:
-                try:
-                    captcha_solution = self.captcha_solver(str(form['captchaId']))
-                except RuntimeError as error:
-                    raise EnrollmentError(f'自动验证码失败：{error}') from error
-                if (not isinstance(captcha_solution, dict) or
-                        not isinstance(captcha_solution.get('validate'), str) or
-                        not captcha_solution['validate'].strip()):
-                    raise EnrollmentError('自动验证码模块未返回有效的验证结果')
-                validate = captcha_solution['validate']
-                if captcha_solution.get('useNumberDate'):
-                    params['useNumberDate'] = str(captcha_solution['useNumberDate'])
-                params['useNumber'] = str(captcha_solution.get('useNumber') or '1')
+                if captcha_solution is None:
+                    captcha_solution = solve_captcha()
+                validate = use_solution(captcha_solution)
             if not validate and prompt is not None:
                 validate = prompt('需要易盾验证；完成验证后输入 validate（空白停止）：').strip()
             if not validate:
@@ -453,7 +530,17 @@ class EnrollmentRunner:
                 raise EnrollmentError('报名时间已结束')
             self.emit('submit', message=f'提交报名，第 {attempt} 次', activityId=target, attempt=attempt)
             try:
-                result = self.client.call(SUBMIT, params)
+                try:
+                    result = self.client.call(SUBMIT, params)
+                except CaptchaSessionChanged:
+                    if not automatic_validate:
+                        raise
+                    self.emit('captcha_session_refresh', message='提交前会话更新，重新验证；尚未发出报名请求')
+                    validate = use_solution(solve_captcha())
+                    if number(detail.get('joinenddate')) and self.clock() * 1000 >= number(detail['joinenddate']):
+                        raise EnrollmentError('报名时间已结束')
+                    # Only one local refresh. A second change stops before any write.
+                    result = self.client.call(SUBMIT, params)
             except NetworkError:
                 return self.reconcile(target)
             except BusinessError as error:

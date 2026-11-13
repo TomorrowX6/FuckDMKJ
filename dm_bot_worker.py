@@ -11,10 +11,9 @@ import time
 
 from dm_bot_store import Store
 from dm_captcha import CaptchaBrowser
-from dm_grab import DmClient, EnrollmentRunner, EnrollmentError, EnrollmentUncertain, DETAIL, SUBMIT, load_protocol, number
+from dm_grab import DmClient, EnrollmentRunner, EnrollmentError, EnrollmentUncertain, CaptchaSessionChanged, DETAIL, SUBMIT, CAPTCHA_HINT, load_protocol, number
 
 ROOT = Path(__file__).resolve().parent
-CAPTCHA_HINT = '8cbcfc2941f6455d9f499f01bcb7186c'
 
 
 class JobCancelled(Exception):
@@ -28,6 +27,7 @@ class Worker:
         self.interrupted = threading.Event()
         self.submitted = False
         self.secrets = set()
+        self.captcha_sessions = {}
         self.open_at = store.job(job_id)['open_at']
         self.warmed = False
 
@@ -57,11 +57,11 @@ class Worker:
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             self.check()
-            if not self.warmed and self.open_at - 12 <= time.time() < self.open_at - 3:
+            if not self.warmed and self.open_at - 24 <= time.time() < self.open_at - 14:
                 self.warmed = True
                 previous = self.client.timeout
                 try:
-                    self.client.timeout = min(previous, max(0.1, self.open_at - time.time() - 3))
+                    self.client.timeout = min(previous, max(0.1, self.open_at - time.time() - 14))
                     self.client.call(DETAIL, {'activityId': self.job['activity_id']})
                     self.emit('connection_warmed', message='只读连接已预热')
                 except EnrollmentError as error:
@@ -88,6 +88,9 @@ class Worker:
                 if fields.get('validate'):
                     worker.secrets.add(fields['validate'])
                 if endpoint == SUBMIT:
+                    binding = worker.captcha_sessions.get(fields.get('validate'))
+                    if binding is not None and binding != (profile, ua):
+                        raise CaptchaSessionChanged('提交前会话已变化，验证码尚未使用')
                     if not worker.store.begin_submit(worker.job_id):
                         raise JobCancelled('待抢任务已取消，未再次提交')
                     worker.submitted = True
@@ -113,10 +116,17 @@ class Worker:
                 self.browser.prepare(captcha_id or CAPTCHA_HINT)
 
             def __call__(self, captcha_id):
+                return self.solve(captcha_id)
+
+            def solve(self, captcha_id, *, timeout=60):
                 worker.check()
+                session = worker.store.account(worker.job['uid'])
                 worker.store.phase(worker.job_id, 'captcha')
                 try:
-                    value = self.browser.solve(captcha_id)
+                    value = self.browser.solve(captcha_id, timeout=timeout)
+                    if isinstance(value, dict) and isinstance(value.get('validate'), str):
+                        worker.secrets.add(value['validate'])
+                        worker.captcha_sessions[value['validate']] = session
                 finally:
                     if self.browser.last_timings:
                         worker.emit('captcha_timing', **self.browser.last_timings)
@@ -132,15 +142,8 @@ class Worker:
                 self.client = resources.enter_context(Client(load_protocol(ROOT / 'dm_cli.py'), profile, ua,
                                                               transport='curl', network_profile='app'))
                 browser = resources.enter_context(CaptchaBrowser(emit=lambda message: self.emit('captcha', message=message)))
-                browser._context.tracing.start(screenshots=True, snapshots=True, sources=False)
-
-                def trace():
-                    try:
-                        browser._context.tracing.stop(path=str(self.logs / 'browser-trace.zip'))
-                    except Exception as error:
-                        self.emit('trace_error', errorType=type(error).__name__)
-
-                resources.callback(trace)
+                # Playwright traces retain evaluate() results, including validate.
+                # Keep structured timing/error events instead of recording secrets.
                 try:
                     browser.prepare(CAPTCHA_HINT)
                 except RuntimeError as error:
@@ -149,7 +152,8 @@ class Worker:
                 self.store.phase(self.job_id, 'waiting')
                 self.emit('armed', activityId=self.job['activity_id'], openAt=self.open_at)
                 result = EnrollmentRunner(self.client, sleep=self.sleep, emit=self.emit,
-                                          retry_interval=0.25, captcha_solver=Solver(browser)).run(self.job['activity_id'])
+                                          retry_interval=0.25, captcha_solver=Solver(browser),
+                                          captcha_session=lambda: self.store.account(self.job['uid'])).run(self.job['activity_id'])
                 status = 'success'
         except JobCancelled as error:
             status, result = 'cancelled', {'message': str(error)}

@@ -364,6 +364,162 @@ def test_captcha_solver_cannot_override_target_activity():
     assert sent['activityId'] == '123'
 
 
+class EarlySolver:
+    """Fake only the external CAPTCHA service; the runner and its clock are real."""
+    def __init__(self, clock, early=None):
+        self.clock = clock
+        self.early = early or {'validate': 'early-result', 'useNumber': '2', 'useNumberDate': '138,139'}
+        self.early_calls = []
+        self.normal_calls = []
+
+    def solve(self, captcha_id, *, timeout):
+        self.early_calls.append((captcha_id, self.clock.now, timeout))
+        self.clock.now += min(6, timeout)
+        if isinstance(self.early, Exception):
+            raise self.early
+        return self.early
+
+    def __call__(self, captcha_id):
+        self.normal_calls.append((captcha_id, self.clock.now))
+        return {'validate': 'fresh-result'}
+
+
+def early_client(clock, *, closed=False, captcha_id='real-id', late_form=False):
+    values = replies([{'signUpId': '456'}], activity=detail(joinstartdate=150000),
+                     form={'info': [], 'openCaptcha': True, 'captchaId': captcha_id})
+    if closed:
+        values[tool.INFO].insert(0, tool.BusinessError('closed', '报名未开放'))
+
+    class TimedClient(Client):
+        def call(self, endpoint, fields):
+            if endpoint == tool.INFO and late_form and clock.now >= 150:
+                clock.now += 20
+            if endpoint == tool.SUBMIT:
+                assert clock.now >= 150, 'a CAPTCHA must never trigger an early registration'
+                self.submitted_at = clock.now
+            return super().call(endpoint, fields)
+
+    return TimedClient(values)
+
+
+def test_early_captcha_is_consumed_at_open_with_its_original_telemetry():
+    clock = Clock()
+    client = early_client(clock)
+    solver = EarlySolver(clock)
+    events = []
+    run = tool.EnrollmentRunner(client, clock=clock, sleep=clock.sleep, captcha_solver=solver,
+                                emit=lambda kind, **fields: events.append((kind, fields)))
+    assert run.run('123')['status'] == 'success'
+    assert solver.early_calls == [('real-id', 138, 10)]
+    assert solver.normal_calls == []
+    assert client.submitted_at == 150
+    sent = next(value for path, value in client.calls if path == tool.SUBMIT)
+    assert (sent['validate'], sent['useNumber'], sent['useNumberDate']) == ('early-result', '2', '138,139')
+    assert 'early-result' not in json.dumps(events)
+    assert any(kind == 'captcha_prefetch_reused' for kind, _ in events)
+
+
+@pytest.mark.parametrize('actual_id,expected', [('real-id', 'early-result'), ('changed-id', 'fresh-result')])
+def test_closed_form_reuses_hint_only_after_actual_captcha_id_matches(actual_id, expected):
+    clock = Clock()
+    client = early_client(clock, closed=True, captcha_id=actual_id)
+    solver = EarlySolver(clock)
+    assert runner(client, clock, captcha_solver=solver, captcha_hint='real-id').run('123')['status'] == 'success'
+    sent = next(value for path, value in client.calls if path == tool.SUBMIT)
+    assert sent['validate'] == expected
+    assert solver.early_calls == [('real-id', 138, 10)]
+    assert solver.normal_calls == ([] if actual_id == 'real-id' else [('changed-id', 150)])
+
+
+@pytest.mark.parametrize('early', [RuntimeError('bounded timeout'), {'validate': ' '}, {'other': True}])
+def test_failed_or_malformed_early_captcha_falls_back_after_open(early):
+    clock = Clock()
+    client = early_client(clock)
+    solver = EarlySolver(clock, early)
+    runner(client, clock, captcha_solver=solver).run('123')
+    assert len(solver.early_calls) == 1
+    assert solver.normal_calls == [('real-id', 150)]
+    assert next(value for path, value in client.calls if path == tool.SUBMIT)['validate'] == 'fresh-result'
+
+
+def test_early_captcha_expires_locally_while_waiting_for_delayed_form():
+    clock = Clock()
+    client = early_client(clock, closed=True, late_form=True)
+    solver = EarlySolver(clock)
+    runner(client, clock, captcha_solver=solver, captcha_hint='real-id').run('123')
+    assert solver.normal_calls == [('real-id', 170)]
+    assert next(value for path, value in client.calls if path == tool.SUBMIT)['validate'] == 'fresh-result'
+
+
+@pytest.mark.parametrize('change_at', ['during_solve', 'waiting'])
+def test_session_changes_invalidate_early_captcha(change_at):
+    clock = Clock()
+    client = early_client(clock)
+    session = {'token': 'old-session', 'ua': 'original'}
+
+    class ChangingSolver(EarlySolver):
+        def solve(self, captcha_id, *, timeout):
+            result = super().solve(captcha_id, timeout=timeout)
+            if change_at == 'during_solve':
+                session['token'] = 'new-session'
+            return result
+
+    def sleep(seconds):
+        clock.sleep(seconds)
+        if change_at == 'waiting' and clock.now >= 150:
+            session['ua'] = 'updated'
+
+    solver = ChangingSolver(clock)
+    run = tool.EnrollmentRunner(client, clock=clock, sleep=sleep, captcha_solver=solver,
+                                captcha_session=lambda: session)
+    run.run('123')
+    assert solver.normal_calls == [('real-id', 150)]
+    assert next(value for path, value in client.calls if path == tool.SUBMIT)['validate'] == 'fresh-result'
+
+
+def test_early_captcha_is_not_reused_by_a_second_activity_on_same_runner():
+    clock = Clock()
+    client = early_client(clock)
+    client.replies[tool.DETAIL].append(detail(activityId=124, joinstartdate=153000))
+    client.replies[tool.INFO].append({'info': [], 'openCaptcha': True, 'captchaId': 'real-id'})
+    client.replies[tool.SUBMIT].append({'signUpId': '457'})
+    solver = EarlySolver(clock)
+    run = runner(client, clock, captcha_solver=solver)
+    run.run('123')
+    run.run('124')
+    assert len(solver.early_calls) == 1
+    assert solver.normal_calls == [('real-id', 153)]
+    sent = [value for path, value in client.calls if path == tool.SUBMIT]
+    assert [value['validate'] for value in sent] == ['early-result', 'fresh-result']
+
+
+def test_short_notice_uses_a_bounded_early_attempt_and_preserves_opening_time():
+    clock = Clock(143)
+    client = early_client(clock)
+    solver = EarlySolver(clock)
+    runner(client, clock, captcha_solver=solver).run('123')
+    assert solver.early_calls == [('real-id', 143, 5)]
+    assert client.submitted_at == 150
+
+
+@pytest.mark.parametrize('mode', ['manual', 'dry_run', 'last_second', 'no_captcha'])
+def test_early_solver_is_skipped_when_not_needed(mode, tmp_path):
+    clock = Clock(147 if mode == 'last_second' else 110)
+    client = early_client(clock)
+    solver = EarlySolver(clock)
+    kwargs = {}
+    if mode == 'manual':
+        kwargs['validate'] = 'manual-result'
+    elif mode == 'dry_run':
+        client.build = lambda _endpoint, fields: fields
+        kwargs.update(dry_run=True, preview_path=tmp_path / 'preview.json')
+    elif mode == 'no_captcha':
+        client.replies[tool.INFO] = [{'info': [], 'openCaptcha': False}]
+    runner(client, clock, captcha_solver=solver).run('123', **kwargs)
+    assert solver.early_calls == []
+    assert solver.normal_calls == ([('real-id', 150)] if mode == 'last_second' else [])
+
+
 @pytest.mark.parametrize('manual', [False, True])
 def test_interactive_cli_accepts_multiple_ids_and_closes_shared_browser(tmp_path, monkeypatch, capsys, manual):
     import dm_captcha

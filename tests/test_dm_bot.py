@@ -437,13 +437,13 @@ def test_add_routes_to_persistent_idempotent_task_and_never_submits(state):
     assert '已添加' in api.sent[0][1] and '已存在' in api.sent[1][1]
 
 
-def test_worker_prewarms_slow_server_connection_before_final_seconds(state, tmp_path, monkeypatch):
+def test_worker_prewarms_connection_before_the_early_captcha_window(state, tmp_path, monkeypatch):
     import dm_bot_worker as module
     job, _ = state.add_job('42', '123', OWNER, OWNER, 'Activity', 110)
     state.claim(job['id'])
     worker = Worker(state, job['id'], tmp_path / 'logs')
     worker.job = state.job(job['id'])
-    clock = SimpleNamespace(now=97.0)
+    clock = SimpleNamespace(now=85.0)
     monkeypatch.setattr(module.time, 'time', lambda: clock.now)
     monkeypatch.setattr(module.time, 'monotonic', lambda: clock.now)
     monkeypatch.setattr(module.time, 'sleep', lambda seconds: setattr(clock, 'now', clock.now + seconds))
@@ -458,9 +458,130 @@ def test_worker_prewarms_slow_server_connection_before_final_seconds(state, tmp_
             return {}
 
     worker.client = Client()
-    worker.sleep(13)
+    worker.sleep(25)
     assert len(observed) == 1
-    assert observed[0][0] <= 99
-    assert 8 <= observed[0][1] <= 9
+    assert observed[0][0] <= 87
+    assert 9 <= observed[0][1] <= 10
     assert clock.now == pytest.approx(110)
     assert worker.client.timeout == 10
+
+
+@pytest.mark.parametrize('mode', ['success', 'session_changed', 'boundary_session_changed', 'cancelled'])
+def test_worker_early_captcha_uses_current_session_and_honors_cancellation(state, tmp_path, monkeypatch, capsys, mode):
+    import dm_bot_worker as module
+    from dm_grab import DETAIL, INFO, SUBMIT
+    job, _ = state.add_job('42', '123', OWNER, OWNER, 'Activity', 150)
+    state.claim(job['id'])
+    worker = Worker(state, job['id'], tmp_path / 'logs')
+    original_emit = worker.emit
+
+    def emit(kind, **fields):
+        if mode == 'boundary_session_changed' and kind == 'captcha_prefetch_reused':
+            state.put_account('42', dict(PROFILE, token='updated-session'), json.dumps(UA))
+        original_emit(kind, **fields)
+
+    worker.emit = emit
+    clock = SimpleNamespace(now=110.0)
+    monkeypatch.setattr(module.time, 'time', lambda: clock.now)
+    monkeypatch.setattr(module.time, 'monotonic', lambda: clock.now)
+    monkeypatch.setattr(module.time, 'sleep', lambda seconds: setattr(clock, 'now', clock.now + seconds))
+    real_runner = module.EnrollmentRunner
+    monkeypatch.setattr(module, 'EnrollmentRunner', lambda *args, **kw: real_runner(*args, clock=lambda: clock.now, **kw))
+    submissions, solves = [], []
+
+    def call(client, endpoint, fields):
+        if endpoint == DETAIL:
+            return {'activityId': 123, 'joinstartdate': 150000, 'joinenddate': 300000,
+                    'ableJoinFlag': 1, 'buttonType': 3, 'signUpId': 0}
+        if endpoint == INFO:
+            if clock.now < 150:
+                raise BusinessError('closed', '报名未开放')
+            return {'info': [], 'openCaptcha': True, 'captchaId': module.CAPTCHA_HINT}
+        assert endpoint == SUBMIT
+        submissions.append((clock.now, dict(fields), dict(client.profile)))
+        return {'signUpId': '456'}
+
+    class Browser:
+        last_timings = {'totalSeconds': 6}
+        _context = SimpleNamespace(tracing=SimpleNamespace(start=lambda **_kw: None, stop=lambda **_kw: None))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def prepare(self, _cid):
+            pass
+
+        def solve(self, captcha_id, *, timeout=60):
+            solves.append((clock.now, timeout, captcha_id))
+            clock.now += 6
+            if len(solves) == 1:
+                if mode == 'session_changed':
+                    state.put_account('42', dict(PROFILE, token='updated-session'), json.dumps(UA))
+                elif mode == 'cancelled':
+                    state.cancel('42', '123')
+            return {'validate': 'early-private-result' if len(solves) == 1 else 'fresh-private-result'}
+
+    monkeypatch.setattr(module.DmClient, 'call', call)
+    monkeypatch.setattr(module, 'CaptchaBrowser', lambda **_kw: Browser())
+    assert worker.run() == 0
+    assert solves[0] == (138, 10, module.CAPTCHA_HINT)
+    if mode == 'cancelled':
+        assert submissions == []
+        assert state.job(job['id'])['status'] == 'cancelled'
+        assert state.job(job['id'])['submit_attempts'] == 0
+    else:
+        assert len(submissions) == 1
+        when, fields, profile = submissions[0]
+        assert when == (150 if mode == 'success' else 156)
+        assert fields['validate'] == ('early-private-result' if mode == 'success' else 'fresh-private-result')
+        assert profile['token'] == ('secret-token' if mode == 'success' else 'updated-session')
+        assert state.job(job['id'])['status'] == 'success'
+        assert state.job(job['id'])['submit_attempts'] == 1
+    logs = (worker.logs / 'events.jsonl').read_text(encoding='utf-8') + capsys.readouterr().out
+    for private in ['early-private-result', 'fresh-private-result', 'secret-token', 'updated-session']:
+        assert private not in logs
+
+
+def test_worker_diagnostics_do_not_persist_browser_validation_results(state, tmp_path, monkeypatch, capsys):
+    """Exercise real browser instrumentation against a local page, without CAPTCHA/signup APIs."""
+    import zipfile
+    import dm_bot_worker as module
+    from dm_grab import DETAIL, INFO, SUBMIT
+    marker = 'synthetic-captcha-for-trace-test'
+    job, _ = state.add_job('42', '123', OWNER, OWNER, 'Activity', 0)
+    state.claim(job['id'])
+    worker = Worker(state, job['id'], tmp_path / 'logs')
+
+    def call(_client, endpoint, _fields):
+        if endpoint == DETAIL:
+            return {'activityId': 123, 'joinstartdate': 0, 'ableJoinFlag': 1, 'signUpId': 0}
+        if endpoint == INFO:
+            return {'info': [], 'openCaptcha': True, 'captchaId': module.CAPTCHA_HINT}
+        assert endpoint == SUBMIT
+        return {'signUpId': '456'}
+
+    def solve(browser, _cid, *, timeout=60):
+        page = browser._context.new_page()
+        try:
+            page.evaluate('value => { window.__dmCaptchaResult = {validate: value}; }', marker)
+            return page.evaluate('window.__dmCaptchaResult')
+        finally:
+            page.close()
+
+    monkeypatch.setattr(module.DmClient, 'call', call)
+    monkeypatch.setattr(module.CaptchaBrowser, 'prepare', lambda *_args, **_kw: None)
+    monkeypatch.setattr(module.CaptchaBrowser, 'solve', solve)
+    assert worker.run() == 0
+    for path in worker.logs.rglob('*'):
+        if not path.is_file():
+            continue
+        if zipfile.is_zipfile(path):
+            with zipfile.ZipFile(path) as archive:
+                content = b''.join(archive.read(name) for name in archive.namelist())
+        else:
+            content = path.read_bytes()
+        assert marker.encode() not in content, f'validation persisted in {path.name}'
+    assert marker not in capsys.readouterr().out
