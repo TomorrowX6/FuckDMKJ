@@ -177,6 +177,92 @@ def test_form_hidden_before_opening_is_loaded_after_waiting():
     assert [path for path, _ in client.calls].count('/v2/signup/submit') == 1
 
 
+@pytest.mark.parametrize('recovers', [True, False])
+@pytest.mark.parametrize('preopening_failure', [False, True])
+def test_opening_form_timeout_retries_within_five_seconds_without_replaying_signup(recovers, preopening_failure):
+    clock = Clock(110)
+    values = replies([{'signUpId': '456'}], activity=detail(joinstartdate=150000),
+                     form={'info': [], 'openCaptcha': True, 'captchaId': 'real-id'})
+    attempts = []
+
+    class TimedClient(Client):
+        timeout = 10
+        broken = False
+        opening_calls = 0
+
+        def reset_read_connection(self):
+            self.broken = False
+
+        def call(self, endpoint, fields):
+            if endpoint == tool.INFO:
+                attempts.append((clock.now, self.timeout))
+                if clock.now < 150:
+                    if preopening_failure and len(attempts) == 1:
+                        clock.now += 0.05
+                        raise tool.NetworkError('early connection failed')
+                    raise tool.BusinessError('11111', '报名未开始，请稍后重试')
+                self.opening_calls += 1
+                if self.opening_calls == 1 or self.broken or not recovers:
+                    self.broken = True
+                    clock.now += self.timeout
+                    raise tool.NetworkError('connection timed out')
+                clock.now += 0.2
+            return super().call(endpoint, fields)
+
+    client = TimedClient(values)
+    solver = EarlySolver(clock)
+    run = runner(client, clock, captcha_solver=solver, captcha_hint='real-id', retry_interval=0.25)
+    if recovers:
+        assert run.run('123')['status'] == 'success'
+        sent = [fields for path, fields in client.calls if path == tool.SUBMIT]
+        assert len(sent) == 1 and sent[0]['validate'] == 'early-result'
+        assert clock.now < 152
+    else:
+        with pytest.raises(tool.EnrollmentError, match='报名表|网络'):
+            run.run('123')
+        assert not any(path == tool.SUBMIT for path, _ in client.calls)
+    assert len(attempts) == (4 if preopening_failure else 3)
+    assert next(attempt for attempt in attempts if attempt[0] >= 150) == (150, 1.25)
+    assert clock.now <= 155.001
+    assert client.timeout == 10
+
+
+def test_busy_opening_form_uses_one_deadline_across_business_retries():
+    clock = Clock(150)
+    values = replies([], activity=detail(joinstartdate=150000))
+    values[tool.INFO] = [tool.BusinessError('11111', '系统繁忙，请稍后重试')] * 100
+
+    class SlowClient(Client):
+        timeout = 10
+
+        def call(self, endpoint, fields):
+            if endpoint == tool.INFO:
+                clock.now += min(1.1, self.timeout)
+            return super().call(endpoint, fields)
+
+    client = SlowClient(values)
+    with pytest.raises(tool.EnrollmentError):
+        runner(client, clock, max_attempts=100, retry_interval=0.25).run('123')
+    assert clock.now <= 155.001
+    assert client.timeout == 10
+    assert not any(path == tool.SUBMIT for path, _ in client.calls)
+
+
+def test_form_returning_after_deadline_cannot_start_late_submission():
+    clock = Clock(150)
+
+    class LateClient(Client):
+        def call(self, endpoint, fields):
+            if endpoint == tool.INFO:
+                clock.now += 6
+            return super().call(endpoint, fields)
+
+    client = LateClient(replies([{'signUpId': '456'}], activity=detail(joinstartdate=150000)))
+    with pytest.raises(tool.EnrollmentError, match='5 秒|预算'):
+        runner(client, clock).run('123')
+    assert not any(path == tool.SUBMIT for path, _ in client.calls)
+
+
 def test_dry_run_does_not_wait_if_form_is_still_hidden():
     clock = Clock(110)
     values = replies([], activity=detail(joinstartdate=112000))
@@ -384,7 +470,7 @@ class EarlySolver:
         return {'validate': 'fresh-result'}
 
 
-def early_client(clock, *, closed=False, captcha_id='real-id', late_form=False):
+def early_client(clock, *, closed=False, captcha_id='real-id'):
     values = replies([{'signUpId': '456'}], activity=detail(joinstartdate=150000),
                      form={'info': [], 'openCaptcha': True, 'captchaId': captcha_id})
     if closed:
@@ -392,8 +478,6 @@ def early_client(clock, *, closed=False, captcha_id='real-id', late_form=False):
 
     class TimedClient(Client):
         def call(self, endpoint, fields):
-            if endpoint == tool.INFO and late_form and clock.now >= 150:
-                clock.now += 20
             if endpoint == tool.SUBMIT:
                 assert clock.now >= 150, 'a CAPTCHA must never trigger an early registration'
                 self.submitted_at = clock.now
@@ -442,11 +526,17 @@ def test_failed_or_malformed_early_captcha_falls_back_after_open(early):
     assert next(value for path, value in client.calls if path == tool.SUBMIT)['validate'] == 'fresh-result'
 
 
-def test_early_captcha_expires_locally_while_waiting_for_delayed_form():
+def test_early_captcha_expires_locally_while_user_completes_required_form():
     clock = Clock()
-    client = early_client(clock, closed=True, late_form=True)
+    client = early_client(clock, closed=True)
+    client.replies[tool.INFO][-1]['info'] = [{'fullid': 'name', 'title': 'Name', 'notNull': True}]
     solver = EarlySolver(clock)
-    runner(client, clock, captcha_solver=solver, captcha_hint='real-id').run('123')
+
+    def prompt(_message):
+        clock.now += 20
+        return 'Example'
+
+    runner(client, clock, captcha_solver=solver, captcha_hint='real-id').run('123', prompt=prompt)
     assert solver.normal_calls == [('real-id', 170)]
     assert next(value for path, value in client.calls if path == tool.SUBMIT)['validate'] == 'fresh-result'
 

@@ -180,7 +180,9 @@ class DmClient:
                                         default_headers=False, allow_redirects=False, retry=0,
                                         discard_cookies=True, curl_share=self._curl_share,
                                         curl_infos=[CurlInfo.NUM_CONNECTS, CurlInfo.CONNECT_TIME,
-                                                    CurlInfo.APPCONNECT_TIME, CurlInfo.TOTAL_TIME])
+                                                    CurlInfo.APPCONNECT_TIME, CurlInfo.TOTAL_TIME,
+                                                    CurlInfo.NAMELOOKUP_TIME, CurlInfo.PRETRANSFER_TIME,
+                                                    CurlInfo.STARTTRANSFER_TIME])
             from dm_network import network_profile_options
             self._session_options.update(network_profile_options(self.network_profile))
             self._session = Session(**self._session_options)
@@ -218,6 +220,42 @@ class DmClient:
             self._write_session = self._session_type(**options)
         return self._write_session
 
+    def reset_read_connection(self):
+        """Drop a failed read pool; preserve TLS/DNS sharing and the write policy."""
+        if self._closed:
+            raise EnrollmentError('网络客户端已经关闭')
+        if self._session is not None:
+            self._session.close()
+            self._session = self._session_type(**self._session_options)
+
+    def record_transport(self, response, endpoint, *, curl_code=None):
+        info = response.infos
+        ci = self._curl_info
+        dns, connect = info.get(ci.NAMELOOKUP_TIME), info.get(ci.CONNECT_TIME)
+        handshake, ready = info.get(ci.APPCONNECT_TIME), info.get(ci.PRETRANSFER_TIME)
+        first_byte = info.get(ci.STARTTRANSFER_TIME)
+        self.last_transport_info = {
+            'transport': 'curl_cffi', 'networkProfile': self.network_profile,
+            'connectionPolicy': 'pooled_read' if endpoint in READ_ONLY_ENDPOINTS else 'fresh_write',
+            'httpVersion': self._http_versions.get(int(response.http_version)) if response.http_version else None,
+            'httpStatus': response.status_code,
+            'newConnections': info.get(ci.NUM_CONNECTS),
+            'dnsSeconds': dns, 'tcpConnectSeconds': connect,
+            'tlsHandshakeSeconds': (max(0, handshake - connect) if handshake and connect is not None else
+                                    0 if handshake == 0 and connect == 0 else None),
+            'firstByteSeconds': first_byte, 'totalSeconds': info.get(ci.TOTAL_TIME),
+        }
+        if curl_code is not None:
+            # On a failed TLS handshake libcurl can still set later timestamps.
+            # A new TCP connection without APPCONNECT is the stronger signal.
+            tls_incomplete = connect and not handshake and urllib.parse.urlsplit(self.base_url).scheme == 'https'
+            self.last_transport_info.update(curlCode=curl_code, failureStage=(
+                'http_response' if response.status_code else 'tls' if tls_incomplete else
+                'response_wait' if ready else
+                'request_send' if handshake else
+                ('tls' if urllib.parse.urlsplit(self.base_url).scheme == 'https' else 'request_send') if connect else
+                'tcp' if dns else 'dns_or_connect'))
+
     def build(self, endpoint, fields):
         signed = self.protocol.prepare_payload(dict(self.profile, **fields))
         key = self.protocol.rand_key()
@@ -246,20 +284,7 @@ class DmClient:
                 response = self.request_session(endpoint).post(built['url'], data=built['body'].encode('ascii'),
                                               headers=built['headers'], timeout=self.timeout,
                                               accept_encoding='gzip')
-                info = response.infos
-                ci = self._curl_info
-                connect = info.get(ci.CONNECT_TIME)
-                handshake = info.get(ci.APPCONNECT_TIME)
-                self.last_transport_info = {
-                    'transport': 'curl_cffi',
-                    'networkProfile': self.network_profile,
-                    'connectionPolicy': 'pooled_read' if endpoint in READ_ONLY_ENDPOINTS else 'fresh_write',
-                    'httpVersion': self._http_versions.get(int(response.http_version), str(response.http_version)),
-                    'newConnections': info.get(ci.NUM_CONNECTS),
-                    'tcpConnectSeconds': connect,
-                    'tlsHandshakeSeconds': max(0, handshake - connect) if handshake is not None and connect is not None else None,
-                    'totalSeconds': info.get(ci.TOTAL_TIME),
-                }
+                self.record_transport(response, endpoint)
                 if response.status_code == 429:
                     raise BusinessError('429', '请求过于频繁，请稍后重试')
                 if not 200 <= response.status_code < 300:
@@ -282,6 +307,8 @@ class DmClient:
                 raise BusinessError('429', '请求过于频繁，请稍后重试') from error
             raise NetworkError(f'HTTP {error.code}，接口未返回可确认的报名结果') from error
         except (OSError, urllib.error.URLError, http.client.HTTPException, EOFError, zlib.error) as error:
+            if self._session is not None and getattr(error, 'response', None) is not None:
+                self.record_transport(error.response, endpoint, curl_code=getattr(error, 'code', None))
             raise NetworkError(f'网络请求失败：{error}') from error
         try:
             result = json.loads(self.protocol.decode_response(raw, built['key'].encode('ascii')))
@@ -432,10 +459,47 @@ class EnrollmentRunner:
                 self.emit('captcha_prefetch_ready', message='提前验证完成，等待开放',
                           elapsedSeconds=self.clock() - began)
 
+        form_deadline = None
+        form_network_failures = 0
         for attempt in range(1, self.max_attempts + 1):
+            if not dry_run and self.clock() >= when and form_deadline is None:
+                form_deadline = self.clock() + 5
+                # Opening gets its own recovery chance, independent of warmup errors.
+                form_network_failures = 0
+            remaining = form_deadline - self.clock() if form_deadline is not None else None
+            if remaining is not None and remaining <= 0:
+                raise EnrollmentError('读取报名表超过 5 秒抢报预算，尚未提交报名')
             try:
-                form = self.client.call(INFO, {'activityId': target})
+                previous_timeout = getattr(self.client, 'timeout', None)
+                try:
+                    if remaining is not None:
+                        self.client.timeout = min(previous_timeout or 10,
+                                                  remaining if form_network_failures else min(1.25, remaining))
+                    form = self.client.call(INFO, {'activityId': target})
+                finally:
+                    if remaining is not None:
+                        if previous_timeout is None:
+                            del self.client.timeout
+                        else:
+                            self.client.timeout = previous_timeout
+                if form_deadline is not None and self.clock() > form_deadline:
+                    raise EnrollmentError('报名表在 5 秒抢报预算后返回，尚未提交报名')
                 break
+            except NetworkError as error:
+                form_network_failures += 1
+                if (dry_run or form_network_failures >= 2 or attempt >= self.max_attempts or
+                        (form_deadline is not None and self.clock() >= form_deadline)):
+                    raise EnrollmentError(f'读取报名表网络失败，尚未提交报名：{error}') from error
+                reset = getattr(self.client, 'reset_read_connection', None)
+                if callable(reset):
+                    reset()
+                self.emit('form_retry', message='报名表只读请求失败，立即重连补试', attempt=attempt,
+                          remainingSeconds=max(0, form_deadline - self.clock()) if form_deadline is not None else None)
+                delay = min(0.1, self.retry_interval)
+                if form_deadline is not None:
+                    delay = min(delay, max(0, form_deadline - self.clock()))
+                if delay > 0:
+                    self.sleep(delay)
             except BusinessError as error:
                 if dry_run or not any(word in str(error) for word in
                                       ('未开始', '未开放', '系统繁忙', '稍后重试')):
@@ -447,7 +511,10 @@ class EnrollmentRunner:
                     self.wait_until(when, prepare=self.prepare_captcha if can_prepare else None,
                                     prefetch=(lambda **kw: prefetch(self.captcha_hint, **kw)) if can_prefetch else None)
                 else:
-                    self.sleep(self.retry_interval)
+                    remaining = form_deadline - self.clock() if form_deadline is not None else self.retry_interval
+                    if remaining <= 0:
+                        raise EnrollmentError('读取报名表超过 5 秒抢报预算，尚未提交报名') from error
+                    self.sleep(min(self.retry_interval, remaining))
         fields = prepare_fields(form, answers or {}, prompt)
         params = {'activityId': target, 'data': json.dumps(fields, ensure_ascii=False,
                   separators=(',', ':')), 'remark': '',

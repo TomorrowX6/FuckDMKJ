@@ -459,10 +459,39 @@ def test_worker_prewarms_connection_before_the_early_captcha_window(state, tmp_p
 
     worker.client = Client()
     worker.sleep(25)
-    assert len(observed) == 1
+    assert len(observed) == 2
     assert observed[0][0] <= 87
     assert 9 <= observed[0][1] <= 10
+    assert 102 <= observed[1][0] < 103
+    assert 6 <= observed[1][1] <= 7
     assert clock.now == pytest.approx(110)
+    assert worker.client.timeout == 10
+
+
+def test_worker_final_connection_warmup_cannot_oversleep_opening(state, tmp_path, monkeypatch):
+    import dm_bot_worker as module
+    job, _ = state.add_job('42', '123', OWNER, OWNER, 'Activity', 150)
+    state.claim(job['id'])
+    worker = Worker(state, job['id'], tmp_path / 'logs')
+    worker.job = state.job(job['id'])
+    clock = SimpleNamespace(now=144.0)
+    monkeypatch.setattr(module.time, 'time', lambda: clock.now)
+    monkeypatch.setattr(module.time, 'monotonic', lambda: clock.now)
+    monkeypatch.setattr(module.time, 'sleep', lambda seconds: setattr(clock, 'now', clock.now + seconds))
+    observed = []
+
+    class Client:
+        timeout = 10
+
+        def call(self, endpoint, fields):
+            observed.append((clock.now, self.timeout))
+            clock.now += self.timeout
+            raise module.EnrollmentError('bounded connection timeout')
+
+    worker.client = Client()
+    worker.sleep(6)
+    assert observed == [(144, 5)]
+    assert clock.now == pytest.approx(150)
     assert worker.client.timeout == 10
 
 

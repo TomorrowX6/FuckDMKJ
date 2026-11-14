@@ -176,6 +176,53 @@ def test_curl_negotiates_tls_and_reuses_connection_with_valid_wire_payload(certi
         assert 'sec-ch-ua' not in headers
 
 
+def test_resetting_failed_read_pool_keeps_tls_configuration_and_reconnects(certificates, protocol):
+    crypto, private = protocol
+    with tls_server(certificates, crypto, private, False) as (url, seen, connections, _negotiated):
+        with tool.DmClient(crypto, {'uid': '1', 'token': 'test'}, '{}', base_url=url,
+                           transport='curl', verify=str(certificates[0])) as client:
+            assert client.call(tool.INFO, {'activityId': '123'}) == {'ok': True}
+            client.reset_read_connection()
+            assert client.call(tool.INFO, {'activityId': '123'}) == {'ok': True}
+            assert client.last_transport_info['newConnections'] == 1
+        assert len(connections) == 2 and len(seen) == 2
+
+
+def test_tls_timeout_preserves_failure_stage_metrics_without_request_secrets(protocol):
+    crypto, _private = protocol
+    stopped = threading.Event()
+
+    class Handler(socketserver.BaseRequestHandler):
+        def handle(self):
+            stopped.wait(2)
+
+    class Server(socketserver.ThreadingTCPServer):
+        daemon_threads = True
+
+    server = Server(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with tool.DmClient(crypto, {'uid': '1', 'token': 'private-test-token'}, '{}',
+                           base_url=f'https://127.0.0.1:{server.server_address[1]}',
+                           transport='curl', timeout=0.2) as client:
+            with pytest.raises(tool.NetworkError):
+                client.call(tool.INFO, {'activityId': '123'})
+            info = client.last_transport_info
+            assert info is not None
+            assert info['curlCode'] == 28
+            assert info['failureStage'] == 'tls', json.dumps(info)
+            assert info['tcpConnectSeconds'] > 0
+            assert info['tlsHandshakeSeconds'] is None
+            assert info['totalSeconds'] > 0
+            assert 'private-test-token' not in json.dumps(info)
+    finally:
+        stopped.set()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
 @pytest.mark.parametrize('path,exception', [('/limit', tool.BusinessError),
                                           ('/truncated', tool.NetworkError),
                                           ('/redirect', tool.NetworkError)])

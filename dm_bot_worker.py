@@ -30,6 +30,7 @@ class Worker:
         self.captcha_sessions = {}
         self.open_at = store.job(job_id)['open_at']
         self.warmed = False
+        self.final_warmed = False
 
     def clean(self, value):
         text = str(value)
@@ -57,13 +58,21 @@ class Worker:
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             self.check()
-            if not self.warmed and self.open_at - 24 <= time.time() < self.open_at - 14:
-                self.warmed = True
+            now = time.time()
+            early = not self.warmed and self.open_at - 24 <= now < self.open_at - 14
+            final = not self.final_warmed and self.open_at - 8 <= now < self.open_at - 2
+            if early or final:
+                if final:
+                    self.final_warmed = True
+                else:
+                    self.warmed = True
                 previous = self.client.timeout
                 try:
-                    self.client.timeout = min(previous, max(0.1, self.open_at - time.time() - 14))
+                    spare = 1 if final else 14
+                    self.client.timeout = min(previous, max(0.1, self.open_at - time.time() - spare))
                     self.client.call(DETAIL, {'activityId': self.job['activity_id']})
-                    self.emit('connection_warmed', message='只读连接已预热')
+                    self.emit('connection_warmed', message='只读连接已预热', phase='final' if final else 'early',
+                              remainingSeconds=self.open_at - time.time())
                 except EnrollmentError as error:
                     self.emit('warmup_warning', message=str(error))
                 finally:
@@ -100,11 +109,12 @@ class Worker:
                 except Exception as error:
                     worker.emit('api_error', endpoint=endpoint, elapsed=time.perf_counter() - began,
                                 errorType=type(error).__name__, code=getattr(error, 'code', None),
-                                message=worker.clean(error))
+                                message=worker.clean(error), network=self.last_transport_info)
                     raise
                 worker.emit('api_success', endpoint=endpoint, elapsed=time.perf_counter() - began,
                             httpVersion=(self.last_transport_info or {}).get('httpVersion'),
-                            newConnections=(self.last_transport_info or {}).get('newConnections'))
+                            newConnections=(self.last_transport_info or {}).get('newConnections'),
+                            network=self.last_transport_info)
                 return result
 
         class Solver:
